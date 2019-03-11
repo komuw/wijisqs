@@ -55,11 +55,11 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.logger.bind(level=self.loglevel, log_metadata={})
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
 
-        self.MessageRetentionPeriod = str(MessageRetentionPeriod)
-        self.MaximumMessageSize = str(MaximumMessageSize)
-        self.ReceiveMessageWaitTimeSeconds = str(ReceiveMessageWaitTimeSeconds)
-        self.VisibilityTimeout = str(VisibilityTimeout)
-        self.DelaySeconds = str(DelaySeconds)
+        self.MessageRetentionPeriod = MessageRetentionPeriod
+        self.MaximumMessageSize = MaximumMessageSize
+        self.ReceiveMessageWaitTimeSeconds = ReceiveMessageWaitTimeSeconds
+        self.VisibilityTimeout = VisibilityTimeout
+        self.DelaySeconds = DelaySeconds
 
         self.QueueUrl: typing.Union[None, str] = None
         self.region_name = region_name
@@ -237,15 +237,16 @@ class SqsBroker(wiji.broker.BaseBroker):
             response = self.client.create_queue(
                 QueueName=queue_name,
                 Attributes={
-                    "MessageRetentionPeriod": self.MessageRetentionPeriod,
-                    "MaximumMessageSize": self.MaximumMessageSize,
-                    "ReceiveMessageWaitTimeSeconds": self.ReceiveMessageWaitTimeSeconds,
-                    "VisibilityTimeout": self.VisibilityTimeout,
-                    "DelaySeconds": self.DelaySeconds,
+                    "MessageRetentionPeriod": str(self.MessageRetentionPeriod),
+                    "MaximumMessageSize": str(self.MaximumMessageSize),
+                    "ReceiveMessageWaitTimeSeconds": str(self.ReceiveMessageWaitTimeSeconds),
+                    "VisibilityTimeout": str(self.VisibilityTimeout),
+                    "DelaySeconds": str(self.DelaySeconds),
                 },
             )
-            QueueUrl = response["QueueUrl"]
-            self.QueueUrl = QueueUrl
+            response.update({"event": "wijisqs.SqsBroker.check"})
+            self.logger.log(logging.DEBUG, response)
+            self.QueueUrl = response["QueueUrl"]
         except Exception as e:
             raise e
 
@@ -295,11 +296,11 @@ class SqsBroker(wiji.broker.BaseBroker):
                 },
             },
         )
-
+        response.update({"event": "wijisqs.SqsBroker.enqueue"})
+        self.logger.log(logging.DEBUG, response)
         _ = response["MD5OfMessageBody"]
         _ = response["MD5OfMessageAttributes"]
         _ = response["MessageId"]
-        _ = response["SequenceNumber"]
 
     async def dequeue(self, queue_name: str) -> str:
         """
@@ -329,11 +330,14 @@ class SqsBroker(wiji.broker.BaseBroker):
             # If no messages are available and the wait time expires, the call returns successfully with an empty list of messages.
             WaitTimeSeconds=5,
         )
-
+        response.update({"event": "wijisqs.SqsBroker.dequeue"})
+        self.logger.log(logging.DEBUG, response)
         if len(response["Messages"]) >= 1:
             ReceiptHandle = response["Messages"][0]["ReceiptHandle"]
             MessageAttributes = response["Messages"][0]["MessageAttributes"]
-            task_id = MessageAttributes["task_id"]
+            task_id = MessageAttributes["task_id"]["StringValue"]
+            task_eta = MessageAttributes["task_eta"]["StringValue"]
+            task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
             self.task_receipt[task_id] = ReceiptHandle
 
             item = response["Messages"][0]["Body"]
@@ -376,3 +380,5 @@ class SqsBroker(wiji.broker.BaseBroker):
             response = self.client.delete_message(
                 QueueUrl=self.QueueUrl, ReceiptHandle=ReceiptHandle
             )
+            response.update({"event": "wijisqs.SqsBroker.done"})
+        self.logger.log(logging.DEBUG, response)
