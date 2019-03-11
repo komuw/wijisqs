@@ -5,6 +5,7 @@ import logging
 import datetime
 import functools
 import concurrent
+import botocore.config
 import botocore.session
 
 
@@ -64,14 +65,21 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.region_name = region_name
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
+
+        self.boto_config = botocore.config.Config(
+            region_name=self.region_name,
+            user_agent="wiji-SqsBroker",
+            connect_timeout=60,
+            read_timeout=60,
+        )
         self.session = botocore.session.Session()
         self.client = self.session.create_client(
-            self,
             service_name="sqs",
             region_name=self.region_name,
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
             use_ssl=True,
+            config=self.boto_config,
         )
 
         self.task_receipt: str = {}

@@ -45,7 +45,7 @@ class TestBroker(TestCase):
 
     def test_bad_instantiation(self):
         def create_broker():
-            self.broker = wijisqs.SqsBroker(
+            broker = wijisqs.SqsBroker(
                 region_name="region_name",
                 aws_access_key_id="aws_access_key_id",
                 aws_secret_access_key=12331414,
@@ -58,3 +58,11 @@ class TestBroker(TestCase):
             "`aws_secret_access_key` should be of type:: `str` You entered: <class 'int'>",
             str(raised_exception.exception),
         )
+
+    def test_fulfills_wiji_broker(self):
+        broker = wijisqs.SqsBroker(
+            region_name="eu-west-1",
+            aws_access_key_id="aws_access_key_id",
+            aws_secret_access_key="12331414",
+        )
+        self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
