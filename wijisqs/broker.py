@@ -55,11 +55,11 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.logger.bind(level=self.loglevel, log_metadata={})
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
 
-        self.MessageRetentionPeriod = MessageRetentionPeriod
-        self.MaximumMessageSize = MaximumMessageSize
-        self.ReceiveMessageWaitTimeSeconds = ReceiveMessageWaitTimeSeconds
-        self.VisibilityTimeout = VisibilityTimeout
-        self.DelaySeconds = DelaySeconds
+        self.MessageRetentionPeriod = str(MessageRetentionPeriod)
+        self.MaximumMessageSize = str(MaximumMessageSize)
+        self.ReceiveMessageWaitTimeSeconds = str(ReceiveMessageWaitTimeSeconds)
+        self.VisibilityTimeout = str(VisibilityTimeout)
+        self.DelaySeconds = str(DelaySeconds)
 
         self.QueueUrl: typing.Union[None, str] = None
         self.region_name = region_name
@@ -286,14 +286,16 @@ class SqsBroker(wiji.broker.BaseBroker):
             MessageBody=item,
             DelaySeconds=delay,
             MessageAttributes={
-                "string": {
-                    "user": "wiji.SqsBroker",
-                    "task_eta": task_options.eta,
-                    "task_id": task_options.task_id,
-                    "task_hook_metadata": task_options.hook_metadata,
-                }
+                "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
+                "task_eta": {"DataType": "String", "StringValue": task_options.eta},
+                "task_id": {"DataType": "String", "StringValue": task_options.task_id},
+                "task_hook_metadata": {
+                    "DataType": "String",
+                    "StringValue": task_options.hook_metadata,
+                },
             },
         )
+
         _ = response["MD5OfMessageBody"]
         _ = response["MD5OfMessageAttributes"]
         _ = response["MessageId"]

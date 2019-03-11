@@ -8,7 +8,7 @@ import wiji
 import wijisqs
 
 
-logging.basicConfig(format="%(message)s", stream=sys.stdout, level=logging.DEBUG)
+logging.basicConfig(format="%(message)s", stream=sys.stdout, level=logging.INFO)
 
 
 def AsyncMock(*args, **kwargs):
@@ -66,3 +66,18 @@ class TestBroker(TestCase):
             aws_secret_access_key="12331414",
         )
         self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
+
+    def test_cool(self):
+        broker = wijisqs.SqsBroker(
+            region_name="eu-west-1",
+            aws_access_key_id="aws_access_key_id",
+            aws_secret_access_key="12331414",
+        )
+
+        class AdderTask(wiji.task.Task):
+            async def run(self, a, b):
+                res = a + b
+                return res
+
+        myAdderTask = AdderTask(the_broker=broker, queue_name=self.__class__.__name__)
+        myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
