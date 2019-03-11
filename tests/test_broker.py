@@ -2,6 +2,7 @@ import sys
 import time
 import asyncio
 import logging
+import datetime
 from unittest import TestCase, mock
 
 import wiji
@@ -33,7 +34,7 @@ class TestBroker(TestCase):
     """
 
     def setUp(self):
-        pass
+        self.queue_name = "WijiSqsTestQueue"
 
     def tearDown(self):
         pass
@@ -71,7 +72,8 @@ class TestBroker(TestCase):
         broker = wijisqs.SqsBroker(
             region_name="eu-west-1",
             aws_access_key_id="aws_access_key_id",
-            aws_secret_access_key="12331414",
+            aws_secret_access_key="aws_secret_access_key",
+            loglevel="DEBUG",
         )
 
         class AdderTask(wiji.task.Task):
@@ -79,5 +81,33 @@ class TestBroker(TestCase):
                 res = a + b
                 return res
 
-        myAdderTask = AdderTask(the_broker=broker, queue_name=self.__class__.__name__)
+        myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
         myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
+
+    def test_task_dequeuing(self):
+        broker = wijisqs.SqsBroker(
+            region_name="eu-west-1",
+            aws_access_key_id="aws_access_key_id",
+            aws_secret_access_key="aws_secret_access_key",
+            loglevel="DEBUG",
+        )
+
+        class AdderTask(wiji.task.Task):
+            async def run(self, a, b):
+                res = a + b
+                return res
+
+        myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+        worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
+
+        # queue tasks
+        kwargs = {"a": 78, "b": 101}
+        myAdderTask.synchronous_delay(a=kwargs["a"], b=kwargs["b"])
+
+        # consume tasks
+        dequeued_item = self._run(worker.consume_tasks(TESTING=True))
+        self.assertEqual(dequeued_item["version"], 1)
+        self.assertEqual(dequeued_item["current_retries"], 0)
+        self.assertEqual(dequeued_item["max_retries"], 0)
+        self.assertEqual(dequeued_item["args"], [])
+        self.assertEqual(dequeued_item["kwargs"], kwargs)
