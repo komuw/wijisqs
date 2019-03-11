@@ -291,7 +291,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                 "task_id": {"DataType": "String", "StringValue": task_options.task_id},
                 "task_hook_metadata": {
                     "DataType": "String",
-                    "StringValue": task_options.hook_metadata,
+                    "StringValue": task_options.hook_metadata or "empty",
                 },
             },
         )
