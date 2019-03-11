@@ -86,6 +86,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.queue_tags = queue_tags
         if not self.queue_tags:
             self.queue_tags = {"user": "wiji.SqsBroker"}
+        self.tags_added: bool = False
 
         self.task_receipt: str = {}
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
@@ -261,7 +262,10 @@ class SqsBroker(wiji.broker.BaseBroker):
             await self.loop.run_in_executor(
                 executor, functools.partial(self.blocking_check, queue_name=queue_name)
             )
-            await self.loop.run_in_executor(executor, functools.partial(self.blocking_tag_queue))
+            if not self.tags_added:
+                await self.loop.run_in_executor(
+                    executor, functools.partial(self.blocking_tag_queue)
+                )
 
     def blocking_check(self, queue_name: str) -> None:
         try:
@@ -285,6 +289,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
         response.update({"event": "wijisqs.SqsBroker.tag_queue"})
         self.logger.log(logging.DEBUG, response)
+        self.tags_added = True
 
     async def enqueue(
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
