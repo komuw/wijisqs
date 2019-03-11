@@ -78,7 +78,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
         self.loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
 
-    def _validate_task_args(
+    def _validate_args(
         self,
         region_name: str,
         aws_access_key_id: str,

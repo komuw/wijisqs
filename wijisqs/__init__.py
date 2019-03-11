@@ -1,2 +1,2 @@
 from . import broker
-from .broker import SqsBroker  # 
+from .broker import SqsBroker  #
