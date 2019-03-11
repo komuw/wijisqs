@@ -86,6 +86,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.queue_tags = queue_tags
         if not self.queue_tags:
             self.queue_tags = {"user": "wiji.SqsBroker"}
+        assert len(self.queue_tags) < 50, "AWS does not recommend setting more than 50 `queue_tags`"
         self.tags_added: bool = False
 
         self.task_receipt: str = {}
@@ -236,7 +237,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                         """the keys and values of `queue_tags` should be of type `str`"""
                     )
         if queue_tags and len(queue_tags) > 50:
-            raise ValueError("""AWS does not recommend adding more than 50 `queue_tags`""")
+            raise ValueError("""AWS does not recommend setting more than 50 `queue_tags`""")
 
     def _sanity_check_logger(self, event: str) -> None:
         """
