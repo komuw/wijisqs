@@ -32,6 +32,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         ReceiveMessageWaitTimeSeconds: int = 0,
         VisibilityTimeout: int = 30,
         DelaySeconds: int = 0,
+        queue_tags: typing.Union[None, typing.Dict[str, str]] = None,
         loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
     ) -> None:
@@ -44,6 +45,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             ReceiveMessageWaitTimeSeconds=ReceiveMessageWaitTimeSeconds,
             VisibilityTimeout=VisibilityTimeout,
             DelaySeconds=DelaySeconds,
+            queue_tags=queue_tags,
             loglevel=loglevel,
             log_handler=log_handler,
         )
@@ -81,6 +83,9 @@ class SqsBroker(wiji.broker.BaseBroker):
             use_ssl=True,
             config=self.boto_config,
         )
+        self.queue_tags = queue_tags
+        if not self.queue_tags:
+            self.queue_tags = {"user": "wiji.SqsBroker"}
 
         self.task_receipt: str = {}
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
@@ -96,6 +101,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         ReceiveMessageWaitTimeSeconds: int,
         VisibilityTimeout: int,
         DelaySeconds: int,
+        queue_tags: typing.Union[None, typing.Dict[str, str]],
         loglevel: str,
         log_handler: typing.Union[None, wiji.logger.BaseLogger],
     ) -> None:
@@ -117,6 +123,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                     type(aws_secret_access_key)
                 )
             )
+
         if loglevel.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(
                 """`loglevel` should be one of; 'DEBUG', 'INFO', 'WARNING', 'ERROR' or 'CRITICAL'. You entered: {0}""".format(
@@ -136,6 +143,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             ReceiveMessageWaitTimeSeconds=ReceiveMessageWaitTimeSeconds,
             VisibilityTimeout=VisibilityTimeout,
             DelaySeconds=DelaySeconds,
+            queue_tags=queue_tags,
         )
 
     def _validate_sqs(
@@ -145,6 +153,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         ReceiveMessageWaitTimeSeconds: int,
         VisibilityTimeout: int,
         DelaySeconds: int,
+        queue_tags: typing.Union[None, typing.Dict[str, str]],
     ):
         if not isinstance(MessageRetentionPeriod, int):
             raise ValueError(
@@ -207,6 +216,27 @@ class SqsBroker(wiji.broker.BaseBroker):
         elif DelaySeconds > 900:
             raise ValueError("""`DelaySeconds` should not be greater than 900 seconds""")
 
+        if not isinstance(queue_tags, (type(None), dict)):
+            raise ValueError(
+                """`queue_tags` should be of type:: `None` or `dict` You entered: {0}""".format(
+                    type(queue_tags)
+                )
+            )
+        if queue_tags == {}:
+            raise ValueError("""`queue_tags` should not be an empty dictionary""")
+        if queue_tags:
+            for k, v in queue_tags.items():
+                if not isinstance(k, str):
+                    raise ValueError(
+                        """the keys and values of `queue_tags` should be of type `str`"""
+                    )
+                if not isinstance(v, str):
+                    raise ValueError(
+                        """the keys and values of `queue_tags` should be of type `str`"""
+                    )
+        if queue_tags and len(queue_tags) > 50:
+            raise ValueError("""AWS does not recommend adding more than 50 `queue_tags`""")
+
     def _sanity_check_logger(self, event: str) -> None:
         """
         Called when we want to make sure the supplied logger can log.
@@ -249,6 +279,11 @@ class SqsBroker(wiji.broker.BaseBroker):
             self.QueueUrl = response["QueueUrl"]
         except Exception as e:
             raise e
+
+    def blocking_tag_queue(self):
+        response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags={"string": "string"})
+        response.update({"event": "wijisqs.SqsBroker.tag_queue"})
+        self.logger.log(logging.DEBUG, response)
 
     async def enqueue(
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions

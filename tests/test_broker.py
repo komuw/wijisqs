@@ -90,6 +90,13 @@ class TestBroker(TestCase):
             aws_access_key_id="aws_access_key_id",
             aws_secret_access_key="aws_secret_access_key",
             loglevel="DEBUG",
+            queue_tags={
+                "Name": "testSqs",
+                "Owner": "testOwner",
+                "Environment": "staging",
+                "Classification": "internal-use-only",
+                "Status": "deprecated",
+            },
         )
 
         class AdderTask(wiji.task.Task):
