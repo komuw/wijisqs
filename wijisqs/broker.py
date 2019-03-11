@@ -32,7 +32,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         ReceiveMessageWaitTimeSeconds: int = 0,
         VisibilityTimeout: int = 30,
         DelaySeconds: int = 0,
-        loglevel: str = "DEBUG",
+        loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
     ) -> None:
         self._validate_args(
