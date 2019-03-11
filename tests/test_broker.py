@@ -67,7 +67,7 @@ class TestBroker(TestCase):
         )
         self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
 
-    def test_cool(self):
+    def test_task_queuing(self):
         broker = wijisqs.SqsBroker(
             region_name="eu-west-1",
             aws_access_key_id="aws_access_key_id",
