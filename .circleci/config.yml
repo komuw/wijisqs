@@ -21,7 +21,7 @@ jobs:
           name: test & coverage
           command: |
             coverage erase
-            coverage run --omit="*tests*,*cli/test_*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
+            coverage run --omit="*tests*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
             codecov
             coverage report --show-missing --fail-under=70
       - run:
@@ -29,7 +29,7 @@ jobs:
           command: |
             # branch coverage
             coverage erase
-            coverage run --branch --omit="*tests*,*cli/test_*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
+            coverage run --branch --omit="*tests*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
             codecov
             coverage report --show-missing --fail-under=67
 
@@ -55,7 +55,7 @@ jobs:
             python --version
             black --line-length=100 --check . ||  { printf "\\n\\t please use black to format your code."; exit 77; }
             flake8 .
-            pylint --enable=E --disable=W,R,C --unsafe-load-any-extension=y  wijisqs/ cli/ tests/ documentation/
+            pylint --enable=E --disable=W,R,C --unsafe-load-any-extension=y  wijisqs/ tests/ documentation/
             bandit -r --exclude .venv -ll .
             mypy --show-column-numbers -p wijisqs #--strict
 
