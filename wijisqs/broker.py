@@ -80,7 +80,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.aws_secret_access_key = aws_secret_access_key
 
         self.boto_config = botocore.config.Config(
-            aws_region_name=self.aws_region_name,
+            region_name=self.aws_region_name,
             user_agent="wiji-SqsBroker",
             connect_timeout=60,
             read_timeout=60,
@@ -88,7 +88,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.session = botocore.session.Session()
         self.client = self.session.create_client(
             service_name="sqs",
-            aws_region_name=self.aws_region_name,
+            region_name=self.aws_region_name,
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
             use_ssl=True,
