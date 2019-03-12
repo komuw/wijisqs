@@ -68,9 +68,10 @@ class SqsBroker(wiji.broker.BaseBroker):
         # `MaxNumberOfMessages` is the max number of messages to return.
         # SQS never returns more messages than this value(however, fewer messages might be returned).
         self.MaxNumberOfMessages = 1
-        assert (
-            1 <= self.MaxNumberOfMessages <= 10
-        ), "AWS does not alow less than 1 or greater than 10 `MaxNumberOfMessages`"
+        if self.MaxNumberOfMessages < 1 or self.MaxNumberOfMessages > 10:
+            raise ValueError(
+                "AWS does not alow less than 1 or greater than 10 `MaxNumberOfMessages`"
+            )
         self.DelaySeconds = DelaySeconds
 
         self.QueueUrl: typing.Union[None, str] = None
@@ -97,9 +98,8 @@ class SqsBroker(wiji.broker.BaseBroker):
             self.queue_tags = queue_tags
         else:
             self.queue_tags = {"user": "wiji.SqsBroker"}
-        assert (
-            len(self.queue_tags) <= 50
-        ), "AWS does not recommend setting more than 50 `queue_tags`"
+        if len(self.queue_tags) > 50:
+            raise ValueError("AWS does not recommend setting more than 50 `queue_tags`")
         self.tags_added: bool = False
 
         self.task_receipt: typing.Dict[str, str] = {}
