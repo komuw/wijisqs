@@ -1,8 +1,6 @@
 import sys
-import time
 import asyncio
 import logging
-import datetime
 from unittest import TestCase, mock
 
 import wiji
@@ -46,10 +44,10 @@ class TestBroker(TestCase):
 
     def test_bad_instantiation(self):
         def create_broker():
-            broker = wijisqs.SqsBroker(
+            wijisqs.SqsBroker(
                 region_name="region_name",
                 aws_access_key_id="aws_access_key_id",
-                aws_secret_access_key=12331414,
+                aws_secret_access_key=12_331_414,
             )
 
         self.assertRaises(ValueError, create_broker)

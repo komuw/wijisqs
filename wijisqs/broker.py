@@ -400,8 +400,8 @@ class SqsBroker(wiji.broker.BaseBroker):
             ReceiptHandle = msg["ReceiptHandle"]
             MessageAttributes = msg["MessageAttributes"]
             task_id = MessageAttributes["task_id"]["StringValue"]
-            task_eta = MessageAttributes["task_eta"]["StringValue"]
-            task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
+            _ = MessageAttributes["task_eta"]["StringValue"]
+            _ = MessageAttributes["task_hook_metadata"]["StringValue"]
             self.task_receipt[task_id] = ReceiptHandle
 
             msg_body = msg["Body"]

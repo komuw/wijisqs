@@ -1,2 +1,2 @@
-from . import broker
-from .broker import SqsBroker  #
+from . import broker  # noqa: F401
+from .broker import SqsBroker  # noqa: F401
