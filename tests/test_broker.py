@@ -5,7 +5,7 @@ from unittest import TestCase, mock
 
 import wiji
 import wijisqs
-
+from botocore.stub import Stubber
 
 logging.basicConfig(format="%(message)s", stream=sys.stdout, level=logging.INFO)
 
@@ -73,6 +73,22 @@ class TestBroker(TestCase):
             aws_secret_access_key="aws_secret_access_key",
             loglevel="DEBUG",
         )
+
+        stubber = Stubber(broker.client)
+        mock_create_queue_resp = {"QueueUrl": "mock_url_value"}
+        stubber.add_response("create_queue", mock_create_queue_resp)
+        mock_tag_queue_resp = {
+            "ResponseMetadata": {"RequestId": "abc123", "HTTPStatusCode": 200, "HostId": "abc123"}
+        }
+        stubber.add_response("tag_queue", mock_tag_queue_resp)
+        mock_send_message_resp = {
+            "MD5OfMessageBody": "string",
+            "MD5OfMessageAttributes": "string",
+            "MessageId": "string",
+            "SequenceNumber": "string",
+        }
+        stubber.add_response("send_message", mock_send_message_resp)
+        stubber.activate()
 
         class AdderTask(wiji.task.Task):
             async def run(self, a, b):
