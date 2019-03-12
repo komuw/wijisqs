@@ -29,7 +29,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         aws_secret_access_key: str,
         MessageRetentionPeriod: int = 345_600,
         MaximumMessageSize: int = 262_144,
-        ReceiveMessageWaitTimeSeconds: int = 0,
+        ReceiveMessageWaitTimeSeconds: int = 20,
         VisibilityTimeout: int = 30,
         DelaySeconds: int = 0,
         queue_tags: typing.Union[None, typing.Dict[str, str]] = None,
@@ -60,7 +60,16 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.MessageRetentionPeriod = MessageRetentionPeriod
         self.MaximumMessageSize = MaximumMessageSize
         self.ReceiveMessageWaitTimeSeconds = ReceiveMessageWaitTimeSeconds
+        # the value of `VisibilityTimeout` should be a bit longer than the
+        # time it takes to execute the dequeued task.
+        # otherwise, there's a possibility of your task been executed twice.
         self.VisibilityTimeout = VisibilityTimeout
+        # `MaxNumberOfMessages` is the max number of messages to return.
+        # SQS never returns more messages than this value(however, fewer messages might be returned).
+        self.MaxNumberOfMessages = 1
+        assert (
+            1 < self.MaxNumberOfMessages < 10
+        ), "AWS does not alow less than 1 or greater than 10 `MaxNumberOfMessages`"
         self.DelaySeconds = DelaySeconds
 
         self.QueueUrl: typing.Union[None, str] = None
@@ -261,14 +270,14 @@ class SqsBroker(wiji.broker.BaseBroker):
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
             await self.loop.run_in_executor(
-                executor, functools.partial(self.blocking_check, queue_name=queue_name)
+                executor, functools.partial(self._blocking_check, queue_name=queue_name)
             )
             if not self.tags_added:
                 await self.loop.run_in_executor(
-                    executor, functools.partial(self.blocking_tag_queue)
+                    executor, functools.partial(self._blocking_tag_queue)
                 )
 
-    def blocking_check(self, queue_name: str) -> None:
+    def _blocking_check(self, queue_name: str) -> None:
         try:
             response = self.client.create_queue(
                 QueueName=queue_name,
@@ -286,7 +295,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         except Exception as e:
             raise e
 
-    def blocking_tag_queue(self):
+    def _blocking_tag_queue(self):
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
         response.update({"event": "wijisqs.SqsBroker.tag_queue"})
         self.logger.log(logging.DEBUG, response)
@@ -303,14 +312,14 @@ class SqsBroker(wiji.broker.BaseBroker):
             await self.loop.run_in_executor(
                 executor,
                 functools.partial(
-                    self.blocking_enqueue,
+                    self._blocking_enqueue,
                     item=item,
                     queue_name=queue_name,
                     task_options=task_options,
                 ),
             )
 
-    def blocking_enqueue(
+    def _blocking_enqueue(
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
     ) -> None:
         now = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -352,38 +361,50 @@ class SqsBroker(wiji.broker.BaseBroker):
         ) as executor:
             while True:
                 item = await self.loop.run_in_executor(
-                    executor, functools.partial(self.blocking_dequeue, queue_name=queue_name)
+                    executor, functools.partial(self._blocking_dequeue, queue_name=queue_name)
                 )
                 if item:
                     return item
                 else:
                     await asyncio.sleep(5)
 
-    def blocking_dequeue(self, queue_name: str) -> str:
+    def _blocking_dequeue(self, queue_name: str) -> str:
+        """
+        Retrieves one or more messages (up to 10), from the specified queue.
+        Using the WaitTimeSeconds parameter enables long-poll support.
+
+        1. https://botocore.amazonaws.com/v1/documentation/api/latest/reference/services/sqs.html#SQS.Client.receive_message
+        """
         response = self.client.receive_message(
             QueueUrl=self.QueueUrl,
             AttributeNames=["All"],
             MessageAttributeNames=["All"],
-            MaxNumberOfMessages=1,
+            MaxNumberOfMessages=self.MaxNumberOfMessages,
             # VisibilityTimeout: The duration (in seconds) that the received messages are hidden
             # from subsequent retrieve requests after being retrieved by a ReceiveMessage request.
+            # this value should be a bit longer than the time it takes to execute the dequeued task.
+            # otherwise, there's a possibility of your task been executed twice.
             VisibilityTimeout=self.VisibilityTimeout,
             # WaitTimeSeconds: The duration (in seconds) for which the call waits for a message to arrive in the queue before returning.
             # If no messages are available and the wait time expires, the call returns successfully with an empty list of messages.
-            WaitTimeSeconds=5,
+            WaitTimeSeconds=self.ReceiveMessageWaitTimeSeconds,
         )
         response.update({"event": "wijisqs.SqsBroker.dequeue"})
         self.logger.log(logging.DEBUG, response)
         if len(response["Messages"]) >= 1:
-            ReceiptHandle = response["Messages"][0]["ReceiptHandle"]
-            MessageAttributes = response["Messages"][0]["MessageAttributes"]
-            task_id = MessageAttributes["task_id"]["StringValue"]
-            task_eta = MessageAttributes["task_eta"]["StringValue"]
-            task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
-            self.task_receipt[task_id] = ReceiptHandle
+            for msg in response["Messages"]:
+                # TODO: implement long-polling; issues/4
+                # we dont yet have long-polling since we have set
+                # self.MaxNumberOfMessages == 1
+                ReceiptHandle = msg["ReceiptHandle"]
+                MessageAttributes = msg["MessageAttributes"]
+                task_id = MessageAttributes["task_id"]["StringValue"]
+                task_eta = MessageAttributes["task_eta"]["StringValue"]
+                task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
+                self.task_receipt[task_id] = ReceiptHandle
 
-            item = response["Messages"][0]["Body"]
-            return item
+                msg_body = msg["Body"]
+                return msg_body
         else:
             return None
 
@@ -402,7 +423,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             await self.loop.run_in_executor(
                 executor,
                 functools.partial(
-                    self.blocking_done,
+                    self._blocking_done,
                     item=item,
                     queue_name=queue_name,
                     task_options=task_options,
@@ -410,7 +431,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                 ),
             )
 
-    def blocking_done(
+    def _blocking_done(
         self,
         item: str,
         queue_name: str,
