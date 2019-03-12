@@ -51,8 +51,9 @@ class SqsBroker(wiji.broker.BaseBroker):
         )
 
         self.loglevel = loglevel.upper()
-        self.logger = log_handler
-        if not self.logger:
+        if log_handler is not None:
+            self.logger = log_handler
+        else:
             self.logger = wiji.logger.SimpleLogger("wiji.SqsBroker")
         self.logger.bind(level=self.loglevel, log_metadata={})
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
@@ -92,13 +93,14 @@ class SqsBroker(wiji.broker.BaseBroker):
             use_ssl=True,
             config=self.boto_config,
         )
-        self.queue_tags = queue_tags
-        if not self.queue_tags:
+        if queue_tags is not None:
+            self.queue_tags = queue_tags
+        else:
             self.queue_tags = {"user": "wiji.SqsBroker"}
         assert len(self.queue_tags) < 50, "AWS does not recommend setting more than 50 `queue_tags`"
         self.tags_added: bool = False
 
-        self.task_receipt: str = {}
+        self.task_receipt: typing.Dict[str, str] = {}
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
         self.loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
 
@@ -253,7 +255,6 @@ class SqsBroker(wiji.broker.BaseBroker):
         Called when we want to make sure the supplied logger can log.
         """
         try:
-            assert isinstance(self.logger, wiji.logger.BaseLogger)  # make mypy happy
             self.logger.log(logging.DEBUG, {"event": event})
         except Exception as e:
             raise e
@@ -368,7 +369,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                 else:
                     await asyncio.sleep(5)
 
-    def _blocking_dequeue(self, queue_name: str) -> str:
+    def _blocking_dequeue(self, queue_name: str) -> typing.Union[None, str]:
         """
         Retrieves one or more messages (up to 10), from the specified queue.
         Using the WaitTimeSeconds parameter enables long-poll support.
@@ -392,19 +393,19 @@ class SqsBroker(wiji.broker.BaseBroker):
         response.update({"event": "wijisqs.SqsBroker.dequeue"})
         self.logger.log(logging.DEBUG, response)
         if len(response["Messages"]) >= 1:
-            for msg in response["Messages"]:
-                # TODO: implement long-polling; issues/4
-                # we dont yet have long-polling since we have set
-                # self.MaxNumberOfMessages == 1
-                ReceiptHandle = msg["ReceiptHandle"]
-                MessageAttributes = msg["MessageAttributes"]
-                task_id = MessageAttributes["task_id"]["StringValue"]
-                task_eta = MessageAttributes["task_eta"]["StringValue"]
-                task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
-                self.task_receipt[task_id] = ReceiptHandle
+            # TODO: implement long-polling; issues/4
+            # we dont yet have long-polling since we have set
+            # self.MaxNumberOfMessages == 1
+            msg = response["Messages"][0]
+            ReceiptHandle = msg["ReceiptHandle"]
+            MessageAttributes = msg["MessageAttributes"]
+            task_id = MessageAttributes["task_id"]["StringValue"]
+            task_eta = MessageAttributes["task_eta"]["StringValue"]
+            task_hook_metadata = MessageAttributes["task_hook_metadata"]["StringValue"]
+            self.task_receipt[task_id] = ReceiptHandle
 
-                msg_body = msg["Body"]
-                return msg_body
+            msg_body = msg["Body"]
+            return msg_body
         else:
             return None
 
