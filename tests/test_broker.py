@@ -114,7 +114,7 @@ class TestBroker(TestCase):
     def test_bad_instantiation(self):
         def create_broker():
             wijisqs.SqsBroker(
-                region_name="region_name",
+                aws_region_name="aws_region_name",
                 aws_access_key_id="aws_access_key_id",
                 aws_secret_access_key=12_331_414,
             )
@@ -129,7 +129,7 @@ class TestBroker(TestCase):
 
     def test_fulfills_wiji_broker(self):
         broker = wijisqs.SqsBroker(
-            region_name="eu-west-1",
+            aws_region_name="eu-west-1",
             aws_access_key_id="aws_access_key_id",
             aws_secret_access_key="12331414",
         )
@@ -137,7 +137,7 @@ class TestBroker(TestCase):
 
     def test_task_queuing(self):
         broker = wijisqs.SqsBroker(
-            region_name="eu-west-1",
+            aws_region_name="eu-west-1",
             aws_access_key_id="aws_access_key_id",
             aws_secret_access_key="aws_secret_access_key",
             loglevel="DEBUG",
@@ -156,7 +156,7 @@ class TestBroker(TestCase):
 
     def test_task_dequeuing(self):
         broker = wijisqs.SqsBroker(
-            region_name="eu-west-1",
+            aws_region_name="eu-west-1",
             aws_access_key_id="aws_access_key_id",
             aws_secret_access_key="aws_secret_access_key",
             loglevel="DEBUG",

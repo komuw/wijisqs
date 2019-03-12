@@ -24,7 +24,7 @@ class SqsBroker(wiji.broker.BaseBroker):
 
     def __init__(
         self,
-        region_name: str,
+        aws_region_name: str,
         aws_access_key_id: str,
         aws_secret_access_key: str,
         MessageRetentionPeriod: int = 345_600,
@@ -37,7 +37,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
     ) -> None:
         self._validate_args(
-            region_name=region_name,
+            aws_region_name=aws_region_name,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             MessageRetentionPeriod=MessageRetentionPeriod,
@@ -74,12 +74,12 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.DelaySeconds = DelaySeconds
 
         self.QueueUrl: typing.Union[None, str] = None
-        self.region_name = region_name
+        self.aws_region_name = aws_region_name
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
 
         self.boto_config = botocore.config.Config(
-            region_name=self.region_name,
+            aws_region_name=self.aws_region_name,
             user_agent="wiji-SqsBroker",
             connect_timeout=60,
             read_timeout=60,
@@ -87,7 +87,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.session = botocore.session.Session()
         self.client = self.session.create_client(
             service_name="sqs",
-            region_name=self.region_name,
+            aws_region_name=self.aws_region_name,
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
             use_ssl=True,
@@ -108,7 +108,7 @@ class SqsBroker(wiji.broker.BaseBroker):
 
     def _validate_args(
         self,
-        region_name: str,
+        aws_region_name: str,
         aws_access_key_id: str,
         aws_secret_access_key: str,
         MessageRetentionPeriod: int,
@@ -120,10 +120,10 @@ class SqsBroker(wiji.broker.BaseBroker):
         loglevel: str,
         log_handler: typing.Union[None, wiji.logger.BaseLogger],
     ) -> None:
-        if not isinstance(region_name, str):
+        if not isinstance(aws_region_name, str):
             raise ValueError(
-                """`region_name` should be of type:: `str` You entered: {0}""".format(
-                    type(region_name)
+                """`aws_region_name` should be of type:: `str` You entered: {0}""".format(
+                    type(aws_region_name)
                 )
             )
         if not isinstance(aws_access_key_id, str):
