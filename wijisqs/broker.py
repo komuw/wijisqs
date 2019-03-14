@@ -31,8 +31,6 @@ class SqsBroker(wiji.broker.BaseBroker):
         aws_access_key_id: str,
         aws_secret_access_key: str,
         MessageRetentionPeriod: int = 345_600,
-        MaximumMessageSize: int = 262_144,
-        ReceiveMessageWaitTimeSeconds: int = 20,
         VisibilityTimeout: int = 30,
         DelaySeconds: int = 0,
         queue_tags: typing.Union[None, typing.Dict[str, str]] = None,
@@ -40,13 +38,15 @@ class SqsBroker(wiji.broker.BaseBroker):
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
         long_poll: bool = False,
     ) -> None:
+        self.ReceiveMessageWaitTimeSeconds: int = 20
+        self.MaximumMessageSize: int = 262_144
         self._validate_args(
             aws_region_name=aws_region_name,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             MessageRetentionPeriod=MessageRetentionPeriod,
-            MaximumMessageSize=MaximumMessageSize,
-            ReceiveMessageWaitTimeSeconds=ReceiveMessageWaitTimeSeconds,
+            MaximumMessageSize=self.MaximumMessageSize,
+            ReceiveMessageWaitTimeSeconds=self.ReceiveMessageWaitTimeSeconds,
             VisibilityTimeout=VisibilityTimeout,
             DelaySeconds=DelaySeconds,
             queue_tags=queue_tags,
@@ -64,9 +64,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
         self.long_poll = long_poll
 
+        # The length of time, in seconds, for which Amazon SQS retains a message.
         self.MessageRetentionPeriod = MessageRetentionPeriod
-        self.MaximumMessageSize = MaximumMessageSize
-        self.ReceiveMessageWaitTimeSeconds = ReceiveMessageWaitTimeSeconds
         # the value of `VisibilityTimeout` should be a bit longer than the
         # time it takes to execute the dequeued task.
         # otherwise, there's a possibility of your task been executed twice.
@@ -302,10 +301,12 @@ class SqsBroker(wiji.broker.BaseBroker):
             response = self.client.create_queue(
                 QueueName=queue_name,
                 Attributes={
+                    # MessageRetentionPeriod is the length of time, in seconds, for which Amazon SQS retains a message.
                     "MessageRetentionPeriod": str(self.MessageRetentionPeriod),
                     "MaximumMessageSize": str(self.MaximumMessageSize),
                     "ReceiveMessageWaitTimeSeconds": str(self.ReceiveMessageWaitTimeSeconds),
                     "VisibilityTimeout": str(self.VisibilityTimeout),
+                    # DelaySeconds is the length of time, in seconds, for which the delivery of all messages in the queue is delayed.
                     "DelaySeconds": str(self.DelaySeconds),
                 },
             )
@@ -356,6 +357,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         response = self.client.send_message(
             QueueUrl=self.QueueUrl,
             MessageBody=item,
+            # DelaySeconds is the length of time, in seconds, for which to delay a specific message
             DelaySeconds=delay,
             MessageAttributes={
                 "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
