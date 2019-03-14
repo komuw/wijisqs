@@ -136,69 +136,94 @@ class TestBroker(TestCase):
         self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
 
     def test_task_queuing(self):
-        broker = wijisqs.SqsBroker(
-            aws_region_name="eu-west-1",
-            aws_access_key_id="aws_access_key_id",
-            aws_secret_access_key="aws_secret_access_key",
-            loglevel="DEBUG",
-        )
-        stubber = self._stub_sqs_task_queuing(broker=broker)
-        with stubber:
+        brokers = [
+            wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=False,
+            ),
+            wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=True,
+            ),
+        ]
+        for broker in brokers:
+            stubber = self._stub_sqs_task_queuing(broker=broker)
+            with stubber:
 
-            class AdderTask(wiji.task.Task):
-                async def run(self, a, b):
-                    res = a + b
-                    return res
+                class AdderTask(wiji.task.Task):
+                    async def run(self, a, b):
+                        res = a + b
+                        return res
 
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
-            myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
-            stubber.assert_no_pending_responses()
+                myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+                myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
+                stubber.assert_no_pending_responses()
 
     def test_task_dequeuing(self):
-        broker = wijisqs.SqsBroker(
-            aws_region_name="eu-west-1",
-            aws_access_key_id="aws_access_key_id",
-            aws_secret_access_key="aws_secret_access_key",
-            loglevel="DEBUG",
-            queue_tags={
-                "Name": "testSqs",
-                "Owner": "testOwner",
-                "Environment": "staging",
-                "Classification": "internal-use-only",
-                "Status": "deprecated",
-            },
-        )
-        kwargs = {"a": 78, "b": 101}
-        proto = wiji.protocol.Protocol(
-            version=1,
-            task_id="task_id",
-            eta="2019-03-12T14:21:27.751149+00:00",
-            current_retries=0,
-            max_retries=0,
-            log_id="log_id",
-            hook_metadata="hook_metadata",
-            argsy=(),
-            kwargsy=kwargs,
-        )
-        stubber = self._stub_sqs_dequeing(broker=broker, proto=proto)
-        with stubber:
+        queue_tags = {
+            "Name": "testSqs",
+            "Owner": "testOwner",
+            "Environment": "staging",
+            "Classification": "internal-use-only",
+            "Status": "deprecated",
+        }
+        brokers = [
+            wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                queue_tags=queue_tags,
+                long_poll=False,
+            ),
+            wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                queue_tags=queue_tags,
+                long_poll=True,
+            ),
+        ]
 
-            class AdderTask(wiji.task.Task):
-                async def run(self, a, b):
-                    res = a + b
-                    return res
+        for broker in brokers:
+            kwargs = {"a": 78, "b": 101}
+            proto = wiji.protocol.Protocol(
+                version=1,
+                task_id="task_id",
+                eta="2019-03-12T14:21:27.751149+00:00",
+                current_retries=0,
+                max_retries=0,
+                log_id="log_id",
+                hook_metadata="hook_metadata",
+                argsy=(),
+                kwargsy=kwargs,
+            )
+            stubber = self._stub_sqs_dequeing(broker=broker, proto=proto)
+            with stubber:
 
-            # queue tasks
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
-            myAdderTask.synchronous_delay(a=kwargs["a"], b=kwargs["b"])
+                class AdderTask(wiji.task.Task):
+                    async def run(self, a, b):
+                        res = a + b
+                        return res
 
-            # consume tasks
-            worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
-            dequeued_item = self._run(worker.consume_tasks(TESTING=True))
-            self.assertEqual(dequeued_item["version"], 1)
-            self.assertEqual(dequeued_item["current_retries"], 0)
-            self.assertEqual(dequeued_item["max_retries"], 0)
-            self.assertEqual(dequeued_item["args"], [])
-            self.assertEqual(dequeued_item["kwargs"], kwargs)
+                # queue tasks
+                myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+                myAdderTask.synchronous_delay(a=kwargs["a"], b=kwargs["b"])
 
-            stubber.assert_no_pending_responses()
+                # consume tasks
+                worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
+                dequeued_item = self._run(worker.consume_tasks(TESTING=True))
+                self.assertEqual(dequeued_item["version"], 1)
+                self.assertEqual(dequeued_item["current_retries"], 0)
+                self.assertEqual(dequeued_item["max_retries"], 0)
+                self.assertEqual(dequeued_item["args"], [])
+                self.assertEqual(dequeued_item["kwargs"], kwargs)
+
+                stubber.assert_no_pending_responses()

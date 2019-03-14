@@ -9,6 +9,9 @@ import botocore.config
 import botocore.session
 
 
+from . import buffer
+
+
 # See SQS limits: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-limits.html
 # TODO: we need to add this limits as validations to this broker
 
@@ -35,6 +38,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         queue_tags: typing.Union[None, typing.Dict[str, str]] = None,
         loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
+        long_poll: bool = False,
     ) -> None:
         self._validate_args(
             aws_region_name=aws_region_name,
@@ -48,6 +52,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             queue_tags=queue_tags,
             loglevel=loglevel,
             log_handler=log_handler,
+            long_poll=long_poll,
         )
 
         self.loglevel = loglevel.upper()
@@ -57,6 +62,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             self.logger = wiji.logger.SimpleLogger("wiji.SqsBroker")
         self.logger.bind(level=self.loglevel, log_metadata={})
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
+        self.long_poll = long_poll
 
         self.MessageRetentionPeriod = MessageRetentionPeriod
         self.MaximumMessageSize = MaximumMessageSize
@@ -68,6 +74,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         # `MaxNumberOfMessages` is the max number of messages to return.
         # SQS never returns more messages than this value(however, fewer messages might be returned).
         self.MaxNumberOfMessages = 1
+        if self.long_poll:
+            self.MaxNumberOfMessages = 10
         if self.MaxNumberOfMessages < 1 or self.MaxNumberOfMessages > 10:
             raise ValueError(
                 "AWS does not alow less than 1 or greater than 10 `MaxNumberOfMessages`"
@@ -106,6 +114,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
         self.loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
 
+        self.recieveBuf: buffer.ReceiveBuffer = buffer.ReceiveBuffer()
+
     def _validate_args(
         self,
         aws_region_name: str,
@@ -119,6 +129,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         queue_tags: typing.Union[None, typing.Dict[str, str]],
         loglevel: str,
         log_handler: typing.Union[None, wiji.logger.BaseLogger],
+        long_poll: bool,
     ) -> None:
         if not isinstance(aws_region_name, str):
             raise ValueError(
@@ -149,6 +160,12 @@ class SqsBroker(wiji.broker.BaseBroker):
             raise ValueError(
                 """`log_handler` should be of type:: `None` or `wiji.logger.BaseLogger` You entered: {0}""".format(
                     type(log_handler)
+                )
+            )
+        if not isinstance(long_poll, bool):
+            raise ValueError(
+                """`long_poll` should be of type:: `bool` You entered: {0}""".format(
+                    type(long_poll)
                 )
             )
 
@@ -363,13 +380,24 @@ class SqsBroker(wiji.broker.BaseBroker):
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
             while True:
-                item = await self.loop.run_in_executor(
-                    executor, functools.partial(self._blocking_dequeue, queue_name=queue_name)
-                )
-                if item:
-                    return item
+                if self.long_poll:
+                    item = self.recieveBuf.get()
+                    if item:
+                        return item
+                    else:
+                        await self.loop.run_in_executor(
+                            executor,
+                            functools.partial(self._blocking_dequeue, queue_name=queue_name),
+                        )
+                        await asyncio.sleep(1 / 117)
                 else:
-                    await asyncio.sleep(5)
+                    item = await self.loop.run_in_executor(
+                        executor, functools.partial(self._blocking_dequeue, queue_name=queue_name)
+                    )
+                    if item:
+                        return item
+                    else:
+                        await asyncio.sleep(5)
 
     def _blocking_dequeue(self, queue_name: str) -> typing.Union[None, str]:
         """
@@ -394,22 +422,32 @@ class SqsBroker(wiji.broker.BaseBroker):
         )
         response.update({"event": "wijisqs.SqsBroker.dequeue"})
         self.logger.log(logging.DEBUG, response)
-        if len(response["Messages"]) >= 1:
-            # TODO: implement long-polling; issues/4
-            # we dont yet have long-polling since we have set
-            # self.MaxNumberOfMessages == 1
-            msg = response["Messages"][0]
-            ReceiptHandle = msg["ReceiptHandle"]
-            MessageAttributes = msg["MessageAttributes"]
-            task_id = MessageAttributes["task_id"]["StringValue"]
-            _ = MessageAttributes["task_eta"]["StringValue"]
-            _ = MessageAttributes["task_hook_metadata"]["StringValue"]
-            self.task_receipt[task_id] = ReceiptHandle
-
-            msg_body = msg["Body"]
-            return msg_body
-        else:
+        if self.long_poll:
+            if len(response["Messages"]) >= 1:
+                for msg in response["Messages"]:
+                    ReceiptHandle = msg["ReceiptHandle"]
+                    MessageAttributes = msg["MessageAttributes"]
+                    task_id = MessageAttributes["task_id"]["StringValue"]
+                    _ = MessageAttributes["task_eta"]["StringValue"]
+                    _ = MessageAttributes["task_hook_metadata"]["StringValue"]
+                    self.task_receipt[task_id] = ReceiptHandle
+                    msg_body = msg["Body"]
+                    self.recieveBuf.put(new_item=msg_body)
             return None
+        else:
+            if len(response["Messages"]) >= 1:
+                msg = response["Messages"][0]
+                ReceiptHandle = msg["ReceiptHandle"]
+                MessageAttributes = msg["MessageAttributes"]
+                task_id = MessageAttributes["task_id"]["StringValue"]
+                _ = MessageAttributes["task_eta"]["StringValue"]
+                _ = MessageAttributes["task_hook_metadata"]["StringValue"]
+                self.task_receipt[task_id] = ReceiptHandle
+
+                msg_body = msg["Body"]
+                return msg_body
+            else:
+                return None
 
     async def done(
         self,
