@@ -43,7 +43,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
         long_poll: bool = False,
-        batch_send: bool = True,  # TODO: set this to False by default
+        batch_send: bool = False,
         batching_duration: float = 10.00,
     ) -> None:
         self.ReceiveMessageWaitTimeSeconds: int = 20
