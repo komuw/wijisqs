@@ -1,4 +1,5 @@
 import wiji
+import time
 import typing
 import asyncio
 import logging
@@ -21,6 +22,11 @@ from . import buffer
 # TODO: add long-polling; https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-long-polling.html
 
 
+# TODO: rename functions and log events
+import random
+import string
+
+
 class SqsBroker(wiji.broker.BaseBroker):
     """
     """
@@ -37,6 +43,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
         long_poll: bool = False,
+        batch_send: bool = True,  # TODO: set this to False by default
+        batching_duration: float = 10.00,
     ) -> None:
         self.ReceiveMessageWaitTimeSeconds: int = 20
         self.MaximumMessageSize: int = 262_144
@@ -53,6 +61,8 @@ class SqsBroker(wiji.broker.BaseBroker):
             loglevel=loglevel,
             log_handler=log_handler,
             long_poll=long_poll,
+            batch_send=batch_send,
+            batching_duration=batching_duration,
         )
 
         self.loglevel = loglevel.upper()
@@ -63,6 +73,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.logger.bind(level=self.loglevel, log_metadata={})
         self._sanity_check_logger(event="sqsBroker_sanity_check_logger")
         self.long_poll = long_poll
+        self.batch_send = batch_send
+        self.batching_duration = batching_duration
 
         # The length of time, in seconds, for which Amazon SQS retains a message.
         self.MessageRetentionPeriod = MessageRetentionPeriod
@@ -114,6 +126,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
 
         self.recieveBuf: buffer.ReceiveBuffer = buffer.ReceiveBuffer()
+        self.sendBuf: buffer.SendBuffer = buffer.SendBuffer()
 
     def _validate_args(
         self,
@@ -129,6 +142,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         loglevel: str,
         log_handler: typing.Union[None, wiji.logger.BaseLogger],
         long_poll: bool,
+        batch_send: bool,
+        batching_duration: float,
     ) -> None:
         if not isinstance(aws_region_name, str):
             raise ValueError(
@@ -165,6 +180,18 @@ class SqsBroker(wiji.broker.BaseBroker):
             raise ValueError(
                 """`long_poll` should be of type:: `bool` You entered: {0}""".format(
                     type(long_poll)
+                )
+            )
+        if not isinstance(batch_send, bool):
+            raise ValueError(
+                """`batch_send` should be of type:: `bool` You entered: {0}""".format(
+                    type(batch_send)
+                )
+            )
+        if not isinstance(batching_duration, float):
+            raise ValueError(
+                """`batching_duration` should be of type:: `float` You entered: {0}""".format(
+                    type(batching_duration)
                 )
             )
 
@@ -289,14 +316,12 @@ class SqsBroker(wiji.broker.BaseBroker):
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
             await self.loop.run_in_executor(
-                executor, functools.partial(self._blocking_check, queue_name=queue_name)
+                executor, functools.partial(self._create_queue, queue_name=queue_name)
             )
             if not self.tags_added:
-                await self.loop.run_in_executor(
-                    executor, functools.partial(self._blocking_tag_queue)
-                )
+                await self.loop.run_in_executor(executor, functools.partial(self._tag_queue))
 
-    def _blocking_check(self, queue_name: str) -> None:
+    def _create_queue(self, queue_name: str) -> None:
         try:
             response = self.client.create_queue(
                 QueueName=queue_name,
@@ -310,15 +335,15 @@ class SqsBroker(wiji.broker.BaseBroker):
                     "DelaySeconds": str(self.DelaySeconds),
                 },
             )
-            response.update({"event": "wijisqs.SqsBroker.check"})
+            response.update({"event": "wijisqs.SqsBroker._create_queue"})
             self.logger.log(logging.DEBUG, response)
             self.QueueUrl = response["QueueUrl"]
         except Exception as e:
             raise e
 
-    def _blocking_tag_queue(self):
+    def _tag_queue(self):
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
-        response.update({"event": "wijisqs.SqsBroker.tag_queue"})
+        response.update({"event": "wijisqs.SqsBroker._tag_queue"})
         self.logger.log(logging.DEBUG, response)
         self.tags_added = True
 
@@ -330,19 +355,72 @@ class SqsBroker(wiji.broker.BaseBroker):
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
-            await self.loop.run_in_executor(
-                executor,
-                functools.partial(
-                    self._blocking_enqueue,
-                    item=item,
-                    queue_name=queue_name,
-                    task_options=task_options,
-                ),
-            )
 
-    def _blocking_enqueue(
-        self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
-    ) -> None:
+            if self.batch_send:
+                buf_sife = self.sendBuf.size()
+                buf_updated_at = self.sendBuf.last_update_time()
+                now = time.monotonic()
+                time_since_update = now - buf_updated_at
+                # if we havent sent in last X seconds and there is something to send or
+                # number of items in buffer is atleast 10, then send now.
+                if (time_since_update > self.batching_duration and buf_sife > 0) or (
+                    buf_sife >= 10
+                ):
+                    # take items from buffer & send batch
+                    Entries = []
+                    buffer_entries = self.sendBuf.give_me_ten()
+                    for entry in buffer_entries:
+                        thingy = {
+                            "Id": entry["id"],
+                            "MessageBody": entry["msg_body"],
+                            "DelaySeconds": entry["delay"],
+                            "MessageAttributes": {
+                                "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
+                                "task_eta": {"DataType": "String", "StringValue": entry["eta"]},
+                                "task_id": {"DataType": "String", "StringValue": entry["task_id"]},
+                                "task_hook_metadata": {
+                                    "DataType": "String",
+                                    "StringValue": entry.get("task_hook_metadata") or "empty",
+                                },
+                            },
+                        }
+                        Entries.append(thingy)
+                    await self.loop.run_in_executor(
+                        executor, functools.partial(self._send_message_batch, Entries=Entries)
+                    )
+                    # put the incoming one item into buffer
+                    buffer_entry = {
+                        "id": "".join(random.choices(string.ascii_uppercase + string.digits, k=17)),
+                        "msg_body": item,
+                        "delay": self._calculate_msg_delay(task_options=task_options),
+                        "eta": task_options.eta,
+                        "task_id": task_options.task_id,
+                        "task_hook_metadata": task_options.hook_metadata,
+                    }
+                    self.sendBuf.put(new_item=buffer_entry)
+                else:
+                    # dont send, put in buffer
+                    buffer_entry = {
+                        "id": "".join(random.choices(string.ascii_uppercase + string.digits, k=17)),
+                        "msg_body": item,
+                        "delay": self._calculate_msg_delay(task_options=task_options),
+                        "eta": task_options.eta,
+                        "task_id": task_options.task_id,
+                        "task_hook_metadata": task_options.hook_metadata,
+                    }
+                    self.sendBuf.put(new_item=buffer_entry)
+            else:
+                await self.loop.run_in_executor(
+                    executor,
+                    functools.partial(
+                        self._send_message,
+                        item=item,
+                        queue_name=queue_name,
+                        task_options=task_options,
+                    ),
+                )
+
+    def _calculate_msg_delay(self, task_options: wiji.task.TaskOptions):
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         task_eta = task_options.eta
         task_eta = wiji.protocol.Protocol._from_isoformat(task_eta)
@@ -353,7 +431,12 @@ class SqsBroker(wiji.broker.BaseBroker):
             delay = diff.seconds
             if delay > 900:
                 delay = 900
+        return delay
 
+    def _send_message(
+        self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
+    ) -> None:
+        delay = self._calculate_msg_delay(task_options=task_options)
         response = self.client.send_message(
             QueueUrl=self.QueueUrl,
             MessageBody=item,
@@ -369,11 +452,19 @@ class SqsBroker(wiji.broker.BaseBroker):
                 },
             },
         )
-        response.update({"event": "wijisqs.SqsBroker.enqueue"})
+        response.update({"event": "wijisqs.SqsBroker._send_message"})
         self.logger.log(logging.DEBUG, response)
         _ = response["MD5OfMessageBody"]
         _ = response["MD5OfMessageAttributes"]
         _ = response["MessageId"]
+
+    def _send_message_batch(self, Entries: typing.List[typing.Dict]) -> None:
+        # TODO: validate size
+        # The maximum allowed individual message size and the maximum total payload size
+        # (the sum of the individual lengths of all of the batched messages) are both 256 KB (262,144 bytes).
+        response = self.client.send_message_batch(QueueUrl=self.QueueUrl, Entries=Entries)
+        response.update({"event": "wijisqs.SqsBroker._send_message_batch"})
+        self.logger.log(logging.DEBUG, response)
 
     async def dequeue(self, queue_name: str) -> str:
         """
@@ -389,19 +480,26 @@ class SqsBroker(wiji.broker.BaseBroker):
                     else:
                         await self.loop.run_in_executor(
                             executor,
-                            functools.partial(self._blocking_dequeue, queue_name=queue_name),
+                            functools.partial(self._receive_message_POLL, queue_name=queue_name),
                         )
                         await asyncio.sleep(1 / 117)
                 else:
                     item = await self.loop.run_in_executor(
-                        executor, functools.partial(self._blocking_dequeue, queue_name=queue_name)
+                        executor,
+                        functools.partial(self._receive_message_NO_poll, queue_name=queue_name),
                     )
                     if item:
                         return item
                     else:
                         await asyncio.sleep(5)
 
-    def _blocking_dequeue(self, queue_name: str) -> typing.Union[None, str]:
+    def _receive_message_NO_poll(self, queue_name: str) -> typing.Union[None, str]:
+        return self._receive_message(queue_name=queue_name)
+
+    def _receive_message_POLL(self, queue_name: str) -> typing.Union[None, str]:
+        return self._receive_message(queue_name=queue_name)
+
+    def _receive_message(self, queue_name: str) -> typing.Union[None, str]:
         """
         Retrieves one or more messages (up to 10), from the specified queue.
         Using the WaitTimeSeconds parameter enables long-poll support.
@@ -422,8 +520,9 @@ class SqsBroker(wiji.broker.BaseBroker):
             # If no messages are available and the wait time expires, the call returns successfully with an empty list of messages.
             WaitTimeSeconds=self.ReceiveMessageWaitTimeSeconds,
         )
-        response.update({"event": "wijisqs.SqsBroker.dequeue"})
+        response.update({"event": "wijisqs.SqsBroker._receive_message"})
         self.logger.log(logging.DEBUG, response)
+
         if self.long_poll:
             if len(response["Messages"]) >= 1:
                 for msg in response["Messages"]:
@@ -466,7 +565,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             await self.loop.run_in_executor(
                 executor,
                 functools.partial(
-                    self._blocking_done,
+                    self._delete_message,
                     item=item,
                     queue_name=queue_name,
                     task_options=task_options,
@@ -474,7 +573,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                 ),
             )
 
-    def _blocking_done(
+    def _delete_message(
         self,
         item: str,
         queue_name: str,
@@ -486,5 +585,5 @@ class SqsBroker(wiji.broker.BaseBroker):
             response = self.client.delete_message(
                 QueueUrl=self.QueueUrl, ReceiptHandle=ReceiptHandle
             )
-            response.update({"event": "wijisqs.SqsBroker.done"})
+            response.update({"event": "wijisqs.SqsBroker._delete_message"})
             self.logger.log(logging.DEBUG, response)
