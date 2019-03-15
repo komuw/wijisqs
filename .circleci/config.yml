@@ -60,7 +60,7 @@ jobs:
             mypy --show-column-numbers --ignore-missing-imports -p wijisqs #--strict
 
 
-  check-releases:
+  check-releases-notes:
     docker:
       - image: circleci/python:3.7
     environment:
@@ -70,14 +70,7 @@ jobs:
     steps:
       - checkout
       - run:
-          name: install pre-requistes
-          command: |
-            pwd
-            sudo apt -y install pandoc
-            sudo pip install -e .[dev,test]
-            find . -name '*.pyc' -delete;find . -name '__pycache__' -delete | xargs echo
-      - run:
-          name: check-releases
+          name: check-releases-notes
           command: |
             git remote set-branches --add origin master
             git fetch
@@ -100,11 +93,4 @@ workflows:
     jobs:
       - run-tests
       - static-analysis
-      - check-releases:
-          requires:
-            - run-tests
-            - static-analysis
-          filters:
-            branches:
-              only:
-                - master
+      - check-releases-notes

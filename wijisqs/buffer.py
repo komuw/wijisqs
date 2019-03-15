@@ -1,18 +1,14 @@
 import time
 import typing
-
+import collections
 
 # TODO: test this buffers
 
 # THREAD SAFETY
-# We are using a python list as our buffers.
-# Most operations on lists are thread safe[1], specifically .append() and .pop()
-# So we are okay unless we start doing crazy stuff like:
-# L=[]; L.append(L[-1])
-#
-# ref:
-# 1. https://docs.python.org/3/faq/library.html#what-kinds-of-global-value-mutation-are-thread-safe
-# 2. issues/9
+# We are using a python collections.deque as our buffer
+# Deques support thread-safe, memory efficient appends and pops from either side of the deque
+# All this but still with approximately the same O(1) performance in either direction.
+# This is opposed to python list that, incurs O(n) memory movement costs for pop(0)
 
 
 class ReceiveBuffer:
@@ -21,7 +17,7 @@ class ReceiveBuffer:
     """
 
     def __init__(self) -> None:
-        self.pool: typing.List[str] = []
+        self.pool: collections.deque = collections.deque(maxlen=None)
 
     def size(self) -> int:
         return len(self.pool)
@@ -31,7 +27,7 @@ class ReceiveBuffer:
 
     def get(self) -> typing.Union[None, str]:
         try:
-            item = self.pool.pop(0)
+            item = self.pool.popleft()
             return item
         except IndexError:
             # empty
@@ -44,7 +40,7 @@ class SendBuffer:
     """
 
     def __init__(self) -> None:
-        self.pool: typing.List[typing.Dict] = []
+        self.pool: collections.deque = collections.deque(maxlen=None)
         self.updated_at: float = time.monotonic()
 
     def size(self) -> int:
@@ -62,7 +58,7 @@ class SendBuffer:
         items = []
         try:
             for _ in range(1, 11):
-                items.append(self.pool.pop(0))
+                items.append(self.pool.popleft())
         except IndexError:
             pass
         assert (
