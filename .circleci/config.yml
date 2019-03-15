@@ -79,7 +79,7 @@ jobs:
       - run:
           name: check-releases
           command: |
-            git remote set-branches --add origin master # https://github.com/travis-ci/travis-ci/issues/6069
+            git remote set-branches --add origin master
             git fetch
             printf "\n current branch is $CIRCLE_BRANCH \n"
             if [ "$CIRCLE_BRANCH" == "master" ]; then
