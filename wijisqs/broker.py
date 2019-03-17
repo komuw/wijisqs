@@ -1,5 +1,7 @@
 import wiji
 import time
+import random
+import string
 import typing
 import asyncio
 import logging
@@ -17,14 +19,7 @@ from . import buffer
 # TODO: we need to add this limits as validations to this broker
 
 
-# TODO: add batching
-# TODO: add compression
-# TODO: add long-polling; https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-long-polling.html
-
-
-# TODO: rename functions and log events
-import random
-import string
+SQS_STATE: typing.Dict[str, bool] = {"QUEUE_CREATED": False, "TAGS_ADDED": False}
 
 
 class SqsBroker(wiji.broker.BaseBroker):
@@ -119,7 +114,6 @@ class SqsBroker(wiji.broker.BaseBroker):
             self.queue_tags = {"user": "wiji.SqsBroker"}
         if len(self.queue_tags) > 50:
             raise ValueError("AWS does not recommend setting more than 50 `queue_tags`")
-        self.tags_added: bool = False
 
         self.task_receipt: typing.Dict[str, str] = {}
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
@@ -315,10 +309,11 @@ class SqsBroker(wiji.broker.BaseBroker):
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
-            await self.loop.run_in_executor(
-                executor, functools.partial(self._create_queue, queue_name=queue_name)
-            )
-            if not self.tags_added:
+            if not SQS_STATE.get("QUEUE_CREATED"):
+                await self.loop.run_in_executor(
+                    executor, functools.partial(self._create_queue, queue_name=queue_name)
+                )
+            if not SQS_STATE.get("TAGS_ADDED"):
                 await self.loop.run_in_executor(executor, functools.partial(self._tag_queue))
 
     def _create_queue(self, queue_name: str) -> None:
@@ -338,6 +333,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             response.update({"event": "wijisqs.SqsBroker._create_queue"})
             self.logger.log(logging.DEBUG, response)
             self.QueueUrl = response["QueueUrl"]
+            SQS_STATE["QUEUE_CREATED"] = True
         except Exception as e:
             raise e
 
@@ -345,7 +341,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
         response.update({"event": "wijisqs.SqsBroker._tag_queue"})
         self.logger.log(logging.DEBUG, response)
-        self.tags_added = True
+        SQS_STATE["TAGS_ADDED"] = True
 
     async def enqueue(
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
