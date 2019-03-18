@@ -117,7 +117,6 @@ class SqsBroker(wiji.broker.BaseBroker):
 
         self.task_receipt: typing.Dict[str, str] = {}
         self._thread_name_prefix: str = "wiji-SqsBroker-thread-pool"
-        self.loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
 
         self.recieveBuf: buffer.ReceiveBuffer = buffer.ReceiveBuffer()
         self.sendBuf: buffer.SendBuffer = buffer.SendBuffer()
@@ -289,6 +288,16 @@ class SqsBroker(wiji.broker.BaseBroker):
         if queue_tags and len(queue_tags) > 50:
             raise ValueError("""AWS does not recommend setting more than 50 `queue_tags`""")
 
+    @staticmethod
+    def _get_loop():
+        try:
+            loop: asyncio.events.AbstractEventLoop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
+        except Exception as e:
+            raise e
+        return loop
+
     def _sanity_check_logger(self, event: str) -> None:
         """
         Called when we want to make sure the supplied logger can log.
@@ -310,11 +319,11 @@ class SqsBroker(wiji.broker.BaseBroker):
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
             if not SQS_STATE.get("QUEUE_CREATED"):
-                await self.loop.run_in_executor(
+                await self._get_loop().run_in_executor(
                     executor, functools.partial(self._create_queue, queue_name=queue_name)
                 )
             if not SQS_STATE.get("TAGS_ADDED"):
-                await self.loop.run_in_executor(executor, functools.partial(self._tag_queue))
+                await self._get_loop().run_in_executor(executor, functools.partial(self._tag_queue))
 
     def _create_queue(self, queue_name: str) -> None:
         try:
@@ -381,7 +390,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                             },
                         }
                         Entries.append(thingy)
-                    await self.loop.run_in_executor(
+                    await self._get_loop().run_in_executor(
                         executor, functools.partial(self._send_message_batch, Entries=Entries)
                     )
                     # put the incoming one item into buffer
@@ -406,7 +415,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                     }
                     self.sendBuf.put(new_item=buffer_entry)
             else:
-                await self.loop.run_in_executor(
+                await self._get_loop().run_in_executor(
                     executor,
                     functools.partial(
                         self._send_message,
@@ -474,13 +483,13 @@ class SqsBroker(wiji.broker.BaseBroker):
                     if item:
                         return item
                     else:
-                        await self.loop.run_in_executor(
+                        await self._get_loop().run_in_executor(
                             executor,
                             functools.partial(self._receive_message_POLL, queue_name=queue_name),
                         )
                         await asyncio.sleep(1 / 117)
                 else:
-                    item = await self.loop.run_in_executor(
+                    item = await self._get_loop().run_in_executor(
                         executor,
                         functools.partial(self._receive_message_NO_poll, queue_name=queue_name),
                     )
@@ -558,7 +567,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
-            await self.loop.run_in_executor(
+            await self._get_loop().run_in_executor(
                 executor,
                 functools.partial(
                     self._delete_message,
