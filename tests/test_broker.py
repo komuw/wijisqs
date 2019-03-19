@@ -354,6 +354,41 @@ class TestBroker(TestCase):
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, None)
 
+    def test_create_queue_called_once(self):
+        class AdderTask(wiji.task.Task):
+            async def run(self, a, b):
+                res = a + b
+                return res
+
+        class PrintTask(wiji.task.Task):
+            async def run(self):
+                print("PrintTask executed")
+
+        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+            # mock_create_queue.return_value = None
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=False,
+            )
+
+            # queue tasks
+            myAdderTask = AdderTask(
+                the_broker=broker, queue_name="AdderTask_test_create_queue_called_once"
+            )
+            myPrintTask = PrintTask(
+                the_broker=broker, queue_name="PrintTask_test_create_queue_called_once"
+            )
+            myAdderTask.synchronous_delay(a=23, b=14)
+            myPrintTask.synchronous_delay()
+
+            # TODO: implement this
+            print("# TODO: implement this")
+
 
 class TestBatching(TestCase):
     """

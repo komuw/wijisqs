@@ -4,6 +4,7 @@ most recent version is listed first.
 
 ## **version:** v0.1.5
 - bugfix; fix keyError on empty queues : https://github.com/komuw/wijisqs/pull/18
+- for the same instance of a `wijisqs.SqsBroker`; create queue and tag queue should only run once : https://github.com/komuw/wijisqs/pull/19
 
 ## **version:** v0.1.4
 - use the current eventloop if available : https://github.com/komuw/wijisqs/pull/15
