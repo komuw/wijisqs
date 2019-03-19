@@ -28,7 +28,7 @@ class MockSqs:
     https://botocore.amazonaws.com/v1/documentation/api/latest/reference/services/sqs.html
     """
 
-    def __init__(self, proto=None) -> None:
+    def __init__(self, proto=None, mock_msg_to_receive=None) -> None:
         if proto is not None:
             self.proto = proto
         else:
@@ -43,6 +43,8 @@ class MockSqs:
                 argsy=(),
                 kwargsy={"mock_protocol_kwarg": "mock_protocol_kwarg"},
             )
+
+        self.mock_msg_to_receive = mock_msg_to_receive
 
     def create_queue(self, *args, **kwargs):
         return {"QueueUrl": "http://mock_SQS_QueueUrl"}
@@ -79,34 +81,40 @@ class MockSqs:
         }
 
     def receive_message(self, *args, **kwargs):
-        MaxNumberOfMessages = kwargs["MaxNumberOfMessages"]
-        msgs = []
-        # account for polling
-        for i in range(0, MaxNumberOfMessages):
-            msg = {
-                "MessageId": "MOCK_MessageId-{0}".format(i),
-                "ReceiptHandle": "MOCK_ReceiptHandle-{0}".format(i),
-                "MD5OfBody": "MOCK_MD5OfBody-{0}".format(i),
-                "Body": self.proto.json(),
-                "Attributes": {
-                    "MOCK_Attributes_KEY-{0}".format(i): "MOCK_Attributes_Value-{0}".format(i)
-                },
-                "MD5OfMessageAttributes": "MOCK_MD5OfMessageAttributes-{0}".format(i),
-                "MessageAttributes": {
-                    "task_id": {"StringValue": "MOCK_task_id-{0}".format(i), "DataType": "string"},
-                    "task_eta": {
-                        "StringValue": "MOCK_task_eta-{0}".format(i),
-                        "DataType": "string",
+        if self.mock_msg_to_receive:
+            return self.mock_msg_to_receive
+        else:
+            MaxNumberOfMessages = kwargs["MaxNumberOfMessages"]
+            msgs = []
+            # account for polling
+            for i in range(0, MaxNumberOfMessages):
+                msg = {
+                    "MessageId": "MOCK_MessageId-{0}".format(i),
+                    "ReceiptHandle": "MOCK_ReceiptHandle-{0}".format(i),
+                    "MD5OfBody": "MOCK_MD5OfBody-{0}".format(i),
+                    "Body": self.proto.json(),
+                    "Attributes": {
+                        "MOCK_Attributes_KEY-{0}".format(i): "MOCK_Attributes_Value-{0}".format(i)
                     },
-                    "task_hook_metadata": {
-                        "StringValue": "MOCK_task_hook_metadata-{0}".format(i),
-                        "DataType": "string",
+                    "MD5OfMessageAttributes": "MOCK_MD5OfMessageAttributes-{0}".format(i),
+                    "MessageAttributes": {
+                        "task_id": {
+                            "StringValue": "MOCK_task_id-{0}".format(i),
+                            "DataType": "string",
+                        },
+                        "task_eta": {
+                            "StringValue": "MOCK_task_eta-{0}".format(i),
+                            "DataType": "string",
+                        },
+                        "task_hook_metadata": {
+                            "StringValue": "MOCK_task_hook_metadata-{0}".format(i),
+                            "DataType": "string",
+                        },
                     },
-                },
-            }
-            msgs.append(msg)
+                }
+                msgs.append(msg)
 
-        return {"Messages": msgs}
+            return {"Messages": msgs}
 
     def delete_message(self, *args, **kwargs):
         return {}
@@ -280,6 +288,71 @@ class TestBroker(TestCase):
                 self.assertEqual(dequeued_item["max_retries"], 0)
                 self.assertEqual(dequeued_item["args"], [])
                 self.assertEqual(dequeued_item["kwargs"], kwargs)
+
+    def test_receive_no_message(self):
+        mock_okay_resp = {
+            "Messages": [
+                {
+                    "MessageId": "MOCK_MessageId-0",
+                    "ReceiptHandle": "MOCK_ReceiptHandle-0",
+                    "MD5OfBody": "MOCK_MD5OfBody-0",
+                    "Body": "self.proto.json()",
+                    "Attributes": {"MOCK_Attributes_KEY-0": "MOCK_Attributes_Value-0"},
+                    "MD5OfMessageAttributes": "MOCK_MD5OfMessageAttributes-0",
+                    "MessageAttributes": {
+                        "task_id": {"StringValue": "MOCK_task_id-0", "DataType": "string"},
+                        "task_eta": {"StringValue": "MOCK_task_eta-0", "DataType": "string"},
+                        "task_hook_metadata": {
+                            "StringValue": "MOCK_task_hook_metadata-0",
+                            "DataType": "string",
+                        },
+                    },
+                }
+            ]
+        }
+
+        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+            # okay response
+            mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_okay_resp)
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=False,
+            )
+            broker.QueueUrl = "mockQueueUrl"
+            msg = broker._receive_message(queue_name="TestQueue")
+            self.assertEqual(msg, mock_okay_resp["Messages"][0]["Body"])
+            self.assertEqual(broker.recieveBuf.size(), 0)
+
+        mock_empty_resp = {
+            "ResponseMetadata": {
+                "RequestId": "90deaad3-aae8-53d1-be1b-ffd944323f5a",
+                "HTTPStatusCode": 200,
+                "HTTPHeaders": {
+                    "x-amzn-requestid": "90deaad3-aae8-53d1-be1b-ffd944323f5a",
+                    "date": "Tue, 19 Mar 2019 13:20:46 GMT",
+                    "content-type": "text/xml",
+                    "content-length": "240",
+                },
+                "RetryAttempts": 0,
+            }
+        }
+        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+            # empty response
+            mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_empty_resp)
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=True,
+            )
+            broker.QueueUrl = "mockQueueUrl"
+            msg = broker._receive_message(queue_name="TestQueue")
+            self.assertEqual(msg, None)
 
 
 class TestBatching(TestCase):

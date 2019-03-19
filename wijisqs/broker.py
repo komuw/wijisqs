@@ -323,7 +323,9 @@ class SqsBroker(wiji.broker.BaseBroker):
                     executor, functools.partial(self._create_queue, queue_name=queue_name)
                 )
             if not SQS_STATE.get("TAGS_ADDED"):
-                await self._get_loop().run_in_executor(executor, functools.partial(self._tag_queue))
+                await self._get_loop().run_in_executor(
+                    executor, functools.partial(self._tag_queue, queue_name=queue_name)
+                )
 
     def _create_queue(self, queue_name: str) -> None:
         try:
@@ -339,16 +341,16 @@ class SqsBroker(wiji.broker.BaseBroker):
                     "DelaySeconds": str(self.DelaySeconds),
                 },
             )
-            response.update({"event": "wijisqs.SqsBroker._create_queue"})
+            response.update({"event": "wijisqs.SqsBroker._create_queue", "queue_name": queue_name})
             self.logger.log(logging.DEBUG, response)
             self.QueueUrl = response["QueueUrl"]
             SQS_STATE["QUEUE_CREATED"] = True
         except Exception as e:
             raise e
 
-    def _tag_queue(self):
+    def _tag_queue(self, queue_name: str):
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
-        response.update({"event": "wijisqs.SqsBroker._tag_queue"})
+        response.update({"event": "wijisqs.SqsBroker._tag_queue", "queue_name": queue_name})
         self.logger.log(logging.DEBUG, response)
         SQS_STATE["TAGS_ADDED"] = True
 
@@ -391,7 +393,10 @@ class SqsBroker(wiji.broker.BaseBroker):
                         }
                         Entries.append(thingy)
                     await self._get_loop().run_in_executor(
-                        executor, functools.partial(self._send_message_batch, Entries=Entries)
+                        executor,
+                        functools.partial(
+                            self._send_message_batch, Entries=Entries, queue_name=queue_name
+                        ),
                     )
                     # put the incoming one item into buffer
                     buffer_entry = {
@@ -457,18 +462,20 @@ class SqsBroker(wiji.broker.BaseBroker):
                 },
             },
         )
-        response.update({"event": "wijisqs.SqsBroker._send_message"})
+        response.update({"event": "wijisqs.SqsBroker._send_message", "queue_name": queue_name})
         self.logger.log(logging.DEBUG, response)
         _ = response["MD5OfMessageBody"]
         _ = response["MD5OfMessageAttributes"]
         _ = response["MessageId"]
 
-    def _send_message_batch(self, Entries: typing.List[typing.Dict]) -> None:
+    def _send_message_batch(self, Entries: typing.List[typing.Dict], queue_name: str) -> None:
         # TODO: validate size
         # The maximum allowed individual message size and the maximum total payload size
         # (the sum of the individual lengths of all of the batched messages) are both 256 KB (262,144 bytes).
         response = self.client.send_message_batch(QueueUrl=self.QueueUrl, Entries=Entries)
-        response.update({"event": "wijisqs.SqsBroker._send_message_batch"})
+        response.update(
+            {"event": "wijisqs.SqsBroker._send_message_batch", "queue_name": queue_name}
+        )
         self.logger.log(logging.DEBUG, response)
 
     async def dequeue(self, queue_name: str) -> str:
@@ -525,8 +532,12 @@ class SqsBroker(wiji.broker.BaseBroker):
             # If no messages are available and the wait time expires, the call returns successfully with an empty list of messages.
             WaitTimeSeconds=self.ReceiveMessageWaitTimeSeconds,
         )
-        response.update({"event": "wijisqs.SqsBroker._receive_message"})
+        response.update({"event": "wijisqs.SqsBroker._receive_message", "queue_name": queue_name})
         self.logger.log(logging.DEBUG, response)
+
+        if not response.get("Messages"):
+            # empty response from SQS
+            return None
 
         if self.long_poll:
             if len(response["Messages"]) >= 1:
@@ -590,5 +601,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             response = self.client.delete_message(
                 QueueUrl=self.QueueUrl, ReceiptHandle=ReceiptHandle
             )
-            response.update({"event": "wijisqs.SqsBroker._delete_message"})
+            response.update(
+                {"event": "wijisqs.SqsBroker._delete_message", "queue_name": queue_name}
+            )
             self.logger.log(logging.DEBUG, response)
