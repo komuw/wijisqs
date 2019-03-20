@@ -359,12 +359,13 @@ class SqsBroker(wiji.broker.BaseBroker):
             await self._get_loop().run_in_executor(
                 executor, functools.partial(self._create_queue, queue_name=queue_name)
             )
-            await self._get_loop().run_in_executor(
-                executor, functools.partial(self._tag_queue, queue_name=queue_name)
-            )
             # this should always run during `check` call
+            # and should run immediatley after `_create_queue` but before `_tag_queue`
             await self._get_loop().run_in_executor(
                 executor, functools.partial(self._get_queue_url, queue_name=queue_name)
+            )
+            await self._get_loop().run_in_executor(
+                executor, functools.partial(self._tag_queue, queue_name=queue_name)
             )
 
     @utils.execute_only_once
@@ -385,6 +386,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             response.update({"event": "wijisqs.SqsBroker._create_queue", "queue_name": queue_name})
             self.logger.log(logging.DEBUG, response)
             self.QueueUrl = response["QueueUrl"]
+            setattr(self, "QueueUrl", response["QueueUrl"])
         except Exception as e:
             raise e
 
@@ -401,6 +403,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             response.update({"event": "wijisqs.SqsBroker._get_queue_url", "queue_name": queue_name})
             self.logger.log(logging.DEBUG, response)
             self.QueueUrl = response["QueueUrl"]
+            setattr(self, "QueueUrl", response["QueueUrl"])
         except Exception as e:
             raise e
 
