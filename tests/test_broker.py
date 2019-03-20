@@ -52,6 +52,9 @@ class MockSqs:
     def tag_queue(self, *args, **kwargs):
         return {}
 
+    def get_queue_url(self, *args, **kwargs):
+        return {"QueueUrl": "http://mock_SQS_QueueUrl"}
+
     def send_message(self, *args, **kwargs):
         return {
             "MD5OfMessageBody": "MOCK_MD5OfMessageBody",
@@ -321,7 +324,6 @@ class TestBroker(TestCase):
                 loglevel="DEBUG",
                 long_poll=False,
             )
-            broker.QueueUrl = "mockQueueUrl"
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, mock_okay_resp["Messages"][0]["Body"])
             self.assertEqual(broker.recieveBuf.size(), 0)
@@ -350,7 +352,6 @@ class TestBroker(TestCase):
                 loglevel="DEBUG",
                 long_poll=True,
             )
-            broker.QueueUrl = "mockQueueUrl"
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, None)
 
@@ -388,6 +389,28 @@ class TestBroker(TestCase):
 
             # TODO: implement this
             print("# TODO: implement this")
+
+    def test_queurl_available(self):
+        class PrintTask(wiji.task.Task):
+            async def run(self, **kwargs):
+                print("PrintTask executed")
+
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+            )
+            # queue tasks
+            myPrintTask = PrintTask(
+                the_broker=broker, queue_name="PrintTask_test_create_queue_called_once"
+            )
+            myPrintTask.synchronous_delay()
+            self.assertIsNotNone(broker.QueueUrl)
+            self.assertIsInstance(broker.QueueUrl, str)
 
 
 class TestBatching(TestCase):

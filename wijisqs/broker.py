@@ -14,6 +14,9 @@ import botocore.session
 from . import utils
 from . import buffer
 
+if typing.TYPE_CHECKING:
+    import botocore.client
+
 
 # See SQS limits: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-limits.html
 # TODO: we need to add this limits as validations to this broker
@@ -90,21 +93,12 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
 
-        self.boto_config = botocore.config.Config(
-            region_name=self.aws_region_name,
-            user_agent="wiji-SqsBroker",
-            connect_timeout=60,
-            read_timeout=60,
-        )
-        self.session = botocore.session.Session()
-        self.client = self.session.create_client(
-            service_name="sqs",
-            region_name=self.aws_region_name,
+        self.client = self._sqs_client(
+            aws_region_name=self.aws_region_name,
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
-            use_ssl=True,
-            config=self.boto_config,
         )
+
         if queue_tags is not None:
             self.queue_tags = queue_tags
         else:
@@ -304,6 +298,33 @@ class SqsBroker(wiji.broker.BaseBroker):
         except Exception as e:
             raise e
 
+    @staticmethod
+    def _sqs_client(
+        aws_region_name: str,
+        aws_access_key_id: str,
+        aws_secret_access_key: str,
+        user_agent: str = "wiji-SqsBroker",
+    ) -> "botocore.client.SQS":
+        """
+        this is its own function so that it can be mocked.
+            with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+                mock_boto_client.return_value = MockSqs()
+                # add tests here
+        """
+        boto_config: botocore.config.Config = botocore.config.Config(
+            region_name=aws_region_name, user_agent=user_agent, connect_timeout=60, read_timeout=60
+        )
+        session: botocore.session.Session = botocore.session.Session()
+        client: "botocore.client.SQS" = session.create_client(
+            service_name="sqs",
+            region_name=aws_region_name,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            use_ssl=True,
+            config=boto_config,
+        )
+        return client
+
     async def check(self, queue_name: str) -> None:
         """
         - If you provide the name of an existing queue along with the exact names and values of all the queue's attributes,
@@ -320,6 +341,10 @@ class SqsBroker(wiji.broker.BaseBroker):
             )
             await self._get_loop().run_in_executor(
                 executor, functools.partial(self._tag_queue, queue_name=queue_name)
+            )
+            # this should always run during `check` call
+            await self._get_loop().run_in_executor(
+                executor, functools.partial(self._get_queue_url, queue_name=queue_name)
             )
 
     @utils.execute_only_once
@@ -344,10 +369,20 @@ class SqsBroker(wiji.broker.BaseBroker):
             raise e
 
     @utils.execute_only_once
-    def _tag_queue(self, queue_name: str):
+    def _tag_queue(self, queue_name: str) -> None:
         response = self.client.tag_queue(QueueUrl=self.QueueUrl, Tags=self.queue_tags)
         response.update({"event": "wijisqs.SqsBroker._tag_queue", "queue_name": queue_name})
         self.logger.log(logging.DEBUG, response)
+
+    def _get_queue_url(self, queue_name: str) -> None:
+        # this should always run during `check` call
+        try:
+            response = self.client.get_queue_url(QueueName=queue_name)
+            response.update({"event": "wijisqs.SqsBroker._get_queue_url", "queue_name": queue_name})
+            self.logger.log(logging.DEBUG, response)
+            self.QueueUrl = response["QueueUrl"]
+        except Exception as e:
+            raise e
 
     async def enqueue(
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
