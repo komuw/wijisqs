@@ -325,6 +325,26 @@ class SqsBroker(wiji.broker.BaseBroker):
         )
         return client
 
+    @staticmethod
+    def _retry_after(current_retries: int) -> int:
+        """
+        returns the number of seconds to retry after.
+        retries will happen in this sequence;
+        0.5min, 1min, 2min, 4min, 8min, 16min, 32min, 16min, 16min, 16min ...
+        """
+        if current_retries < 0:
+            current_retries = 0
+
+        jitter = random.randint(60, 180)  # 1min-3min
+        if current_retries in [0, 1]:
+            return int(0.5 * 60)  # 0.5min
+        elif current_retries == 2:
+            return 1 * 60
+        elif current_retries >= 6:
+            return (16 * 60) + jitter  # 16 minutes + jitter
+        else:
+            return (60 * (2 ** current_retries)) + jitter
+
     async def check(self, queue_name: str) -> None:
         """
         - If you provide the name of an existing queue along with the exact names and values of all the queue's attributes,
@@ -508,12 +528,13 @@ class SqsBroker(wiji.broker.BaseBroker):
         )
         self.logger.log(logging.DEBUG, response)
 
-    async def dequeue(self, queue_name: str) -> str:
+    async def dequeue(self, queue_name: str, TESTING: bool = False) -> str:
         """
         """
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
+            retry_count: int = 0
             while True:
                 if self.long_poll:
                     item = self.recieveBuf.get()
@@ -531,9 +552,26 @@ class SqsBroker(wiji.broker.BaseBroker):
                         functools.partial(self._receive_message_NO_poll, queue_name=queue_name),
                     )
                     if item:
+                        retry_count = 0
                         return item
                     else:
-                        await asyncio.sleep(5)
+                        interval = self._retry_after(retry_count)
+                        retry_count += 1
+                        self.logger.log(
+                            logging.INFO,
+                            {
+                                "event": "wijisqs.SqsBroker.dequeue",
+                                "stage": "end",
+                                "queue_name": queue_name,
+                                "state": "queue is empty. sleeping for {0} seconds".format(
+                                    interval
+                                ),
+                                "retry_count": retry_count,
+                            },
+                        )
+                        await asyncio.sleep(interval)
+                        if TESTING:
+                            return '{"key": "mock_item"}'
 
     def _receive_message_NO_poll(self, queue_name: str) -> typing.Union[None, str]:
         return self._receive_message(queue_name=queue_name)

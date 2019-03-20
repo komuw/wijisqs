@@ -3,7 +3,8 @@ most recent version is listed first.
 
 
 ## **version:** v0.1.6
-bugfix, make sure QueueUrl is always available: https://github.com/komuw/wijisqs/pull/23
+- bugfix, make sure QueueUrl is always available: https://github.com/komuw/wijisqs/pull/23
+- for empty queues, sleep exponetially upto maximum : https://github.com/komuw/wijisqs/pull/24
 
 ## **version:** v0.1.5
 - bugfix; fix keyError on empty queues : https://github.com/komuw/wijisqs/pull/18

@@ -23,7 +23,7 @@ jobs:
             coverage erase
             coverage run --omit="*tests*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
             codecov
-            coverage report --show-missing --fail-under=83
+            coverage report --show-missing --fail-under=82
       - run:
           name: test & branch coverage
           command: |
@@ -31,7 +31,7 @@ jobs:
             coverage erase
             coverage run --branch --omit="*tests*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
             codecov
-            coverage report --show-missing --fail-under=78
+            coverage report --show-missing --fail-under=76
 
   static-analysis:
     docker:

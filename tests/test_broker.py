@@ -172,7 +172,7 @@ class TestBroker(TestCase):
                 res = a + b
                 return res
 
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
             brokers = [
@@ -238,7 +238,7 @@ class TestBroker(TestCase):
             "Classification": "internal-use-only",
             "Status": "deprecated",
         }
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs(proto=proto)
 
             brokers = [
@@ -314,7 +314,7 @@ class TestBroker(TestCase):
             ]
         }
 
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             # okay response
             mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_okay_resp)
             broker = wijisqs.SqsBroker(
@@ -341,7 +341,7 @@ class TestBroker(TestCase):
                 "RetryAttempts": 0,
             }
         }
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             # empty response
             mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_empty_resp)
 
@@ -365,7 +365,7 @@ class TestBroker(TestCase):
             async def run(self):
                 print("PrintTask executed")
 
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
             # mock_create_queue.return_value = None
 
@@ -412,6 +412,49 @@ class TestBroker(TestCase):
             self.assertIsNotNone(broker.QueueUrl)
             self.assertIsInstance(broker.QueueUrl, str)
 
+    def test_retries(self):
+        res = wijisqs.SqsBroker._retry_after(-110)
+        self.assertEqual(res, 30)
+
+        res = wiji.Worker._retry_after(5)
+        self.assertTrue(res > 60 * (2 ** 5))
+
+        for i in [6, 7, 34]:
+            res = wiji.Worker._retry_after(i)
+            self.assertTrue(res > 16 * 60)
+
+    def test_retries_called(self):
+        mock_empty_resp = {
+            "ResponseMetadata": {
+                "RequestId": "90deaad3-aae8-53d1-be1b-ffd944323f5a",
+                "HTTPStatusCode": 200,
+                "HTTPHeaders": {
+                    "x-amzn-requestid": "90deaad3-aae8-53d1-be1b-ffd944323f5a",
+                    "date": "Tue, 19 Mar 2019 13:20:46 GMT",
+                    "content-type": "text/xml",
+                    "content-length": "240",
+                },
+                "RetryAttempts": 0,
+            }
+        }
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+            "wijisqs.SqsBroker._retry_after"
+        ) as mock_retry_after:
+            # empty response
+            mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_empty_resp)
+            mock_retry_after.return_value = 1
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                long_poll=False,
+            )
+            msg = self._run(broker.dequeue(queue_name="TestQueue", TESTING=True))
+            self.assertEqual(msg, '{"key": "mock_item"}')
+            self.assertTrue(mock_retry_after.called)
+
 
 class TestBatching(TestCase):
     """
@@ -439,7 +482,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -475,7 +518,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -510,7 +553,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -556,7 +599,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -631,7 +674,7 @@ class TestLongPoll(TestCase):
         return loop.run_until_complete(coro)
 
     def test_no_poll(self):
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._receive_message_POLL"
         ) as mock_receive_message_POLL, mock.patch(
             "wijisqs.SqsBroker._receive_message_NO_poll"
@@ -666,7 +709,7 @@ class TestLongPoll(TestCase):
 
     #######
     def test_yes_poll(self):
-        with mock.patch("botocore.session.Session.create_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs(proto=self.proto)
             # mock_receive_message_POLL.return_value = self.proto.json()
 
