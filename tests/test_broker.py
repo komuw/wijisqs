@@ -47,13 +47,15 @@ class MockSqs:
         self.mock_msg_to_receive = mock_msg_to_receive
 
     def create_queue(self, *args, **kwargs):
-        return {"QueueUrl": "http://mock_SQS_QueueUrl"}
+        queue_name = kwargs["QueueName"]
+        return {"QueueUrl": "http://mock_{queue_name}_SQS_QueueUrl".format(queue_name=queue_name)}
 
     def tag_queue(self, *args, **kwargs):
         return {}
 
     def get_queue_url(self, *args, **kwargs):
-        return {"QueueUrl": "http://mock_SQS_QueueUrl"}
+        queue_name = kwargs["QueueName"]
+        return {"QueueUrl": "http://mock_{queue_name}_SQS_QueueUrl".format(queue_name=queue_name)}
 
     def send_message(self, *args, **kwargs):
         return {
@@ -324,6 +326,7 @@ class TestBroker(TestCase):
                 loglevel="DEBUG",
                 long_poll=False,
             )
+            broker._get_queue_url(queue_name="TestQueue")
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, mock_okay_resp["Messages"][0]["Body"])
             self.assertEqual(broker.recieveBuf.size(), 0)
@@ -352,6 +355,7 @@ class TestBroker(TestCase):
                 loglevel="DEBUG",
                 long_poll=True,
             )
+            broker._get_queue_url(queue_name="TestQueue")
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, None)
 
@@ -409,8 +413,12 @@ class TestBroker(TestCase):
                 the_broker=broker, queue_name="PrintTask_test_create_queue_called_once"
             )
             myPrintTask.synchronous_delay()
-            self.assertIsNotNone(broker.QueueUrl)
-            self.assertIsInstance(broker.QueueUrl, str)
+            self.assertIsNotNone(
+                broker.queue_name_and_url["PrintTask_test_create_queue_called_once"]
+            )
+            self.assertIsInstance(
+                broker.queue_name_and_url["PrintTask_test_create_queue_called_once"], str
+            )
 
     def test_retries(self):
         res = wijisqs.SqsBroker._retry_after(-110)
@@ -451,9 +459,48 @@ class TestBroker(TestCase):
                 loglevel="DEBUG",
                 long_poll=False,
             )
+            broker._get_queue_url(queue_name="TestQueue")
             msg = self._run(broker.dequeue(queue_name="TestQueue", TESTING=True))
             self.assertEqual(msg, '{"key": "mock_item"}')
             self.assertTrue(mock_retry_after.called)
+
+    def test_multiple_queues_one_broker(self):
+        class PrintTask(wiji.task.Task):
+            async def run(self, **kwargs):
+                print("PrintTask executed")
+
+        class AdderTask(wiji.task.Task):
+            async def run(self, a, b):
+                res = a + b
+                return res
+
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+            )
+            # queue tasks
+            print_queue_name = "PrintTask_Queue"
+            myPrintTask = PrintTask(the_broker=broker, queue_name=print_queue_name)
+            myPrintTask.synchronous_delay()
+            myPrintTask.synchronous_delay()
+            myPrintTask.synchronous_delay()
+            adder_queue_name = "AdderTask_Queue"
+            myAdderTask = AdderTask(the_broker=broker, queue_name=adder_queue_name)
+            myAdderTask.synchronous_delay(a=12, b=55)
+            myAdderTask.synchronous_delay(a=2, b=55)
+            myAdderTask.synchronous_delay(a=133, b=545)
+            myAdderTask.synchronous_delay(a=0, b=5005)
+
+            self.assertEqual(len(broker.queue_name_and_url), 2)
+            self.assertIsInstance(broker.queue_name_and_url[print_queue_name], str)
+            self.assertIsInstance(broker.queue_name_and_url[adder_queue_name], str)
+            self.assertIn(print_queue_name, broker.queue_name_and_url[print_queue_name])
+            self.assertIn(adder_queue_name, broker.queue_name_and_url[adder_queue_name])
 
 
 class TestBatching(TestCase):
