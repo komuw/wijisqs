@@ -329,7 +329,7 @@ class TestBroker(TestCase):
             broker._get_queue_url(queue_name="TestQueue")
             msg = broker._receive_message(queue_name="TestQueue")
             self.assertEqual(msg, mock_okay_resp["Messages"][0]["Body"])
-            self.assertEqual(broker.recieveBuf.size(), 0)
+            self.assertEqual(broker._get_per_queue_recieveBuf("TestQueue").size(), 0)
 
         mock_empty_resp = {
             "ResponseMetadata": {
@@ -414,10 +414,10 @@ class TestBroker(TestCase):
             )
             myPrintTask.synchronous_delay()
             self.assertIsNotNone(
-                broker.queue_name_and_url["PrintTask_test_create_queue_called_once"]
+                broker._get_per_queue_url(queue_name="PrintTask_test_create_queue_called_once")
             )
             self.assertIsInstance(
-                broker.queue_name_and_url["PrintTask_test_create_queue_called_once"], str
+                broker._get_per_queue_url(queue_name="PrintTask_test_create_queue_called_once"), str
             )
 
     def test_retries(self):
@@ -496,11 +496,49 @@ class TestBroker(TestCase):
             myAdderTask.synchronous_delay(a=133, b=545)
             myAdderTask.synchronous_delay(a=0, b=5005)
 
-            self.assertEqual(len(broker.queue_name_and_url), 2)
-            self.assertIsInstance(broker.queue_name_and_url[print_queue_name], str)
-            self.assertIsInstance(broker.queue_name_and_url[adder_queue_name], str)
-            self.assertIn(print_queue_name, broker.queue_name_and_url[print_queue_name])
-            self.assertIn(adder_queue_name, broker.queue_name_and_url[adder_queue_name])
+            self.assertEqual(len(broker.PER_QUEUE_STATE), 2)
+            self.assertIsInstance(broker._get_per_queue_url(print_queue_name), str)
+            self.assertIsInstance(broker._get_per_queue_url(adder_queue_name), str)
+            self.assertIn(print_queue_name, broker._get_per_queue_url(print_queue_name))
+            self.assertIn(adder_queue_name, broker._get_per_queue_url(adder_queue_name))
+
+    def test_task_deletion(self):
+        class PrintTask(wiji.task.Task):
+            async def run(self, **kwargs):
+                print("PrintTask executed")
+
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+            )
+            # queue tasks
+            print_queue_name = "PrintTask_Queue"
+            myPrintTask = PrintTask(the_broker=broker, queue_name=print_queue_name)
+            myPrintTask.synchronous_delay()
+
+            # consume tasks
+            worker = wiji.Worker(the_task=myPrintTask, worker_id="TestWorkerID1")
+            dequeued_item = self._run(worker.consume_tasks(TESTING=True))
+            self.assertEqual(dequeued_item["version"], 1)
+
+            self.assertEqual(len(broker._get_per_queue_task_receipt(print_queue_name)), 1)
+            self._run(
+                broker.done(
+                    item="NotUsed",
+                    queue_name=print_queue_name,
+                    task_options=wiji.task.TaskOptions(
+                        task_id=[*broker._get_per_queue_task_receipt(print_queue_name)][0]
+                    ),
+                    state=wiji.task.TaskState.EXECUTED,
+                )
+            )
+            # item has been deleted
+            self.assertEqual(len(broker._get_per_queue_task_receipt(print_queue_name)), 0)
 
 
 class TestBatching(TestCase):
@@ -551,7 +589,7 @@ class TestBatching(TestCase):
             self.assertTrue(mock_send_message.called)
             self.assertEqual(json.loads(mock_send_message.call_args[1]["item"])["kwargs"], kwargsy)
             self.assertFalse(mock_send_message_batch.called)
-            self.assertEqual(broker.sendBuf.size(), 0)
+            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 0)
 
     def test_yes_batching_one_message(self):
         """
@@ -586,7 +624,7 @@ class TestBatching(TestCase):
 
             self.assertFalse(mock_send_message.called)
             self.assertFalse(mock_send_message_batch.called)
-            self.assertEqual(broker.sendBuf.size(), 1)
+            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 1)
 
     def test_yes_batching_13_message(self):
         """
@@ -631,7 +669,7 @@ class TestBatching(TestCase):
                 kwargsy,
             )
             # 4 messages are left
-            self.assertEqual(broker.sendBuf.size(), 4)
+            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 4)
 
     def test_yes_batching_one_message_long_duration(self):
         """
@@ -679,7 +717,7 @@ class TestBatching(TestCase):
                 kwargsy,
             )
             # no messages left
-            self.assertEqual(broker.sendBuf.size(), 1)
+            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 1)
 
 
 class TestLongPoll(TestCase):
@@ -752,7 +790,7 @@ class TestLongPoll(TestCase):
 
             self.assertFalse(mock_receive_message_POLL.called)
             self.assertTrue(mock_receive_message_NO_poll.called)
-            self.assertEqual(broker.recieveBuf.size(), 0)
+            self.assertEqual(broker._get_per_queue_recieveBuf(self.queue_name).size(), 0)
 
     #######
     def test_yes_poll(self):
@@ -786,4 +824,7 @@ class TestLongPoll(TestCase):
             self.assertEqual(dequeued_item["kwargs"], self.kwargsy)
             # SQS only returns `broker.MaxNumberOfMessages` number of messages upto a maximum of 10
             # and then one message gets consumed by `wiji`. So number left in buffer is broker.MaxNumberOfMessages-1
-            self.assertEqual(broker.recieveBuf.size(), (broker.MaxNumberOfMessages - 1))
+            self.assertEqual(
+                broker._get_per_queue_recieveBuf(self.queue_name).size(),
+                (broker.MaxNumberOfMessages - 1),
+            )
