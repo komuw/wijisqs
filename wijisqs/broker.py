@@ -6,6 +6,7 @@ import typing
 import asyncio
 import logging
 import datetime
+import threading
 import functools
 import concurrent
 import botocore.config
@@ -91,12 +92,6 @@ class SqsBroker(wiji.broker.BaseBroker):
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
 
-        self.client = self._sqs_client(
-            aws_region_name=self.aws_region_name,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-        )
-
         if queue_tags is not None:
             self.queue_tags = queue_tags
         else:
@@ -112,19 +107,15 @@ class SqsBroker(wiji.broker.BaseBroker):
         #     "queue1": { "QueueUrl": "http://queue1_url", "recieveBuf": buffer.ReceiveBuffer(), "sendBuf": buffer.SendBuffer(), "task_receipt": {}},
         #     "queue2": { "QueueUrl": "http://queue2_url", "recieveBuf": buffer.ReceiveBuffer(), "sendBuf": buffer.SendBuffer(), "task_receipt": {}},
         # }
-        self.PER_QUEUE_STATE: typing.Dict[str, typing.Dict[str, typing.Any]] = {}
+        self._PER_QUEUE_STATE: typing.Dict[str, typing.Dict[str, typing.Any]] = {}
 
         # keeps per thread state.
         # it looks like:
         # {
-        #     "thread1": {"client": "botocore_client_1"},
-        #     "thread2": {"client": "botocore_client_2"},
+        #     "thread1": botocore.client.SQS,
+        #     "thread2": botocore.client.SQS,
         # }
-        # see: https://github.com/komuw/wijisqs/issues/28
-        self.PER_THREAD_STATE = {
-            "thread1": {"client": "botocore_client_1"},
-            "thread2": {"client": "botocore_client_2"},
-        }
+        self._PER_THREAD_STATE: typing.Dict[int, "botocore.client.SQS"] = {}
 
     def _validate_args(
         self,
@@ -339,6 +330,19 @@ class SqsBroker(wiji.broker.BaseBroker):
         )
         return client
 
+    def _get_per_thread_client(self) -> "botocore.client.SQS":
+        current_thread_identity = threading.get_ident()
+        if self._PER_THREAD_STATE.get(current_thread_identity):
+            return self._PER_THREAD_STATE.get(current_thread_identity)
+
+        _sqs_client: "botocore.client.SQS" = self._sqs_client(
+            aws_region_name=self.aws_region_name,
+            aws_access_key_id=self.aws_access_key_id,
+            aws_secret_access_key=self.aws_secret_access_key,
+        )
+        self._PER_THREAD_STATE.update({current_thread_identity: _sqs_client})
+        return _sqs_client
+
     @staticmethod
     def _retry_after(current_retries: int) -> int:
         """
@@ -360,18 +364,18 @@ class SqsBroker(wiji.broker.BaseBroker):
             return (60 * (2 ** current_retries)) + jitter
 
     def _get_per_queue_url(self, queue_name: str) -> str:
-        return self.PER_QUEUE_STATE[queue_name]["QueueUrl"]
+        return self._PER_QUEUE_STATE[queue_name]["QueueUrl"]
 
     def _set_per_queue_state(self, queue_name: str, QueueUrl: str) -> None:
         if (
-            self.PER_QUEUE_STATE.get(queue_name)
-            and self.PER_QUEUE_STATE[queue_name].get("recieveBuf")
-            and self.PER_QUEUE_STATE[queue_name].get("sendBuf")
-            and self.PER_QUEUE_STATE[queue_name].get("task_receipt")
+            self._PER_QUEUE_STATE.get(queue_name)
+            and self._PER_QUEUE_STATE[queue_name].get("recieveBuf")
+            and self._PER_QUEUE_STATE[queue_name].get("sendBuf")
+            and self._PER_QUEUE_STATE[queue_name].get("task_receipt")
         ):
             # this already exist and we do not want to overrite them
             return
-        self.PER_QUEUE_STATE[queue_name] = {
+        self._PER_QUEUE_STATE[queue_name] = {
             "QueueUrl": QueueUrl,
             "recieveBuf": buffer.ReceiveBuffer(),
             "sendBuf": buffer.SendBuffer(),
@@ -379,13 +383,13 @@ class SqsBroker(wiji.broker.BaseBroker):
         }
 
     def _get_per_queue_sendBuf(self, queue_name: str) -> buffer.SendBuffer:
-        return self.PER_QUEUE_STATE[queue_name]["sendBuf"]
+        return self._PER_QUEUE_STATE[queue_name]["sendBuf"]
 
     def _get_per_queue_recieveBuf(self, queue_name: str) -> buffer.ReceiveBuffer:
-        return self.PER_QUEUE_STATE[queue_name]["recieveBuf"]
+        return self._PER_QUEUE_STATE[queue_name]["recieveBuf"]
 
     def _get_per_queue_task_receipt(self, queue_name: str) -> typing.Dict[str, str]:
-        return self.PER_QUEUE_STATE[queue_name]["task_receipt"]
+        return self._PER_QUEUE_STATE[queue_name]["task_receipt"]
 
     async def check(self, queue_name: str) -> None:
         """
@@ -414,13 +418,14 @@ class SqsBroker(wiji.broker.BaseBroker):
         """
         this needs to run for as many queue_name's as will be handled by this broker
         """
-        if self.PER_QUEUE_STATE.get(queue_name) and self.PER_QUEUE_STATE[queue_name].get(
+
+        if self._PER_QUEUE_STATE.get(queue_name) and self._PER_QUEUE_STATE[queue_name].get(
             "QueueUrl"
         ):
             # already exists
             return
         try:
-            response = self.client.create_queue(
+            response = self._get_per_thread_client().create_queue(
                 QueueName=queue_name,
                 Attributes={
                     # MessageRetentionPeriod is the length of time, in seconds, for which Amazon SQS retains a message.
@@ -442,7 +447,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         """
         this needs to run for as many queue_name's as will be handled by this broker
         """
-        response = self.client.tag_queue(
+        response = self._get_per_thread_client().tag_queue(
             QueueUrl=self._get_per_queue_url(queue_name=queue_name), Tags=self.queue_tags
         )
         response.update({"event": "wijisqs.SqsBroker._tag_queue", "queue_name": queue_name})
@@ -453,13 +458,13 @@ class SqsBroker(wiji.broker.BaseBroker):
         this should always run during `check` call
         it populates the queue_name and QueueUrl mapping
         """
-        if self.PER_QUEUE_STATE.get(queue_name) and self.PER_QUEUE_STATE[queue_name].get(
+        if self._PER_QUEUE_STATE.get(queue_name) and self._PER_QUEUE_STATE[queue_name].get(
             "QueueUrl"
         ):
             # already exists
             return
         try:
-            response = self.client.get_queue_url(QueueName=queue_name)
+            response = self._get_per_thread_client().get_queue_url(QueueName=queue_name)
             response.update({"event": "wijisqs.SqsBroker._get_queue_url", "queue_name": queue_name})
             self.logger.log(logging.DEBUG, response)
             self._set_per_queue_state(queue_name=queue_name, QueueUrl=response["QueueUrl"])
@@ -559,7 +564,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
     ) -> None:
         delay = self._calculate_msg_delay(task_options=task_options)
-        response = self.client.send_message(
+        response = self._get_per_thread_client().send_message(
             QueueUrl=self._get_per_queue_url(queue_name=queue_name),
             MessageBody=item,
             # DelaySeconds is the length of time, in seconds, for which to delay a specific message
@@ -584,7 +589,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         # TODO: validate size
         # The maximum allowed individual message size and the maximum total payload size
         # (the sum of the individual lengths of all of the batched messages) are both 256 KB (262,144 bytes).
-        response = self.client.send_message_batch(
+        response = self._get_per_thread_client().send_message_batch(
             QueueUrl=self._get_per_queue_url(queue_name=queue_name), Entries=Entries
         )
         response.update(
@@ -650,7 +655,7 @@ class SqsBroker(wiji.broker.BaseBroker):
 
         1. https://botocore.amazonaws.com/v1/documentation/api/latest/reference/services/sqs.html#SQS.Client.receive_message
         """
-        response = self.client.receive_message(
+        response = self._get_per_thread_client().receive_message(
             QueueUrl=self._get_per_queue_url(queue_name=queue_name),
             AttributeNames=["All"],
             MessageAttributeNames=["All"],
@@ -729,7 +734,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             task_options.task_id, None
         )
         if ReceiptHandle:
-            response = self.client.delete_message(
+            response = self._get_per_thread_client().delete_message(
                 QueueUrl=self._get_per_queue_url(queue_name=queue_name), ReceiptHandle=ReceiptHandle
             )
             response.update(

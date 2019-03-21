@@ -1,6 +1,7 @@
 import time
 import json
 import asyncio
+import threading
 from unittest import TestCase, mock
 
 import wiji
@@ -174,7 +175,7 @@ class TestBroker(TestCase):
                 res = a + b
                 return res
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
             brokers = [
@@ -240,7 +241,7 @@ class TestBroker(TestCase):
             "Classification": "internal-use-only",
             "Status": "deprecated",
         }
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs(proto=proto)
 
             brokers = [
@@ -316,7 +317,7 @@ class TestBroker(TestCase):
             ]
         }
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             # okay response
             mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_okay_resp)
             broker = wijisqs.SqsBroker(
@@ -344,7 +345,7 @@ class TestBroker(TestCase):
                 "RetryAttempts": 0,
             }
         }
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             # empty response
             mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_empty_resp)
 
@@ -369,7 +370,7 @@ class TestBroker(TestCase):
             async def run(self):
                 print("PrintTask executed")
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
             # mock_create_queue.return_value = None
 
@@ -399,7 +400,7 @@ class TestBroker(TestCase):
             async def run(self, **kwargs):
                 print("PrintTask executed")
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
             broker = wijisqs.SqsBroker(
@@ -445,7 +446,7 @@ class TestBroker(TestCase):
                 "RetryAttempts": 0,
             }
         }
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._retry_after"
         ) as mock_retry_after:
             # empty response
@@ -474,7 +475,7 @@ class TestBroker(TestCase):
                 res = a + b
                 return res
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
             broker = wijisqs.SqsBroker(
@@ -496,7 +497,7 @@ class TestBroker(TestCase):
             myAdderTask.synchronous_delay(a=133, b=545)
             myAdderTask.synchronous_delay(a=0, b=5005)
 
-            self.assertEqual(len(broker.PER_QUEUE_STATE), 2)
+            self.assertEqual(len(broker._PER_QUEUE_STATE), 2)
             self.assertIsInstance(broker._get_per_queue_url(print_queue_name), str)
             self.assertIsInstance(broker._get_per_queue_url(adder_queue_name), str)
             self.assertIn(print_queue_name, broker._get_per_queue_url(print_queue_name))
@@ -507,7 +508,7 @@ class TestBroker(TestCase):
             async def run(self, **kwargs):
                 print("PrintTask executed")
 
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
             broker = wijisqs.SqsBroker(
@@ -540,6 +541,45 @@ class TestBroker(TestCase):
             # item has been deleted
             self.assertEqual(len(broker._get_per_queue_task_receipt(print_queue_name)), 0)
 
+    def test_threading(self):
+        # TODO: fix this test. it is racy
+
+        class PrintTask(wiji.task.Task):
+            async def run(self, **kwargs):
+                print("PrintTask executed")
+
+        # for this test we SHOULD NOT mock _get_per_thread_client
+        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+            )
+            self._run(broker.check(queue_name=self.queue_name))
+            max_num_threads = 5
+            thread_name = "test_threading-thread-prefix"
+
+            def worker_thread(num):
+                current_thread_identity = threading.get_ident()
+                broker._tag_queue(queue_name=self.queue_name)
+                self.assertIsNotNone(broker._PER_THREAD_STATE.get(current_thread_identity))
+                thread_names = []
+                for t in threading.enumerate():
+                    thread_names.append(t.getName())
+                self.assertTrue(thread_name in thread_names)
+
+                if num == (max_num_threads - 1):
+                    self.assertTrue(len(broker._PER_THREAD_STATE) >= 1)
+                    self.assertTrue(threading.active_count() > 1)
+                return
+
+            for i in range(max_num_threads):
+                t = threading.Thread(target=worker_thread, name=thread_name, kwargs={"num": i})
+                t.start()
+
 
 class TestBatching(TestCase):
     """
@@ -567,7 +607,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -603,7 +643,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -638,7 +678,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -684,7 +724,7 @@ class TestBatching(TestCase):
                 return res
 
         kwargsy = {"a": 4, "b": 6}
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
         ) as mock_send_message, mock.patch(
             "wijisqs.SqsBroker._send_message_batch"
@@ -759,7 +799,7 @@ class TestLongPoll(TestCase):
         return loop.run_until_complete(coro)
 
     def test_no_poll(self):
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client, mock.patch(
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._receive_message_POLL"
         ) as mock_receive_message_POLL, mock.patch(
             "wijisqs.SqsBroker._receive_message_NO_poll"
@@ -792,9 +832,8 @@ class TestLongPoll(TestCase):
             self.assertTrue(mock_receive_message_NO_poll.called)
             self.assertEqual(broker._get_per_queue_recieveBuf(self.queue_name).size(), 0)
 
-    #######
     def test_yes_poll(self):
-        with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs(proto=self.proto)
             # mock_receive_message_POLL.return_value = self.proto.json()
 

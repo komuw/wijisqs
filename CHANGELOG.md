@@ -4,6 +4,7 @@ most recent version is listed first.
 
 ## **version:** v0.2.0
 - shard/separate all state per queue: https://github.com/komuw/wijisqs/pull/30
+- use one `botocore` client per thread: https://github.com/komuw/wijisqs/pull/31
 
 ## **version:** v0.1.8
 - one `wijisqs.SqsBroker` instance should be able to serve multiple queues: https://github.com/komuw/wijisqs/pull/26
