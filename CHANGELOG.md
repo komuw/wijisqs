@@ -1,6 +1,8 @@
 ## `wijisqs` changelog:
 most recent version is listed first.
 
+## **version:** v0.2.1
+implemented clean shutdown: https://github.com/komuw/wijisqs/pull/32
 
 ## **version:** v0.2.0
 - shard/separate all state per queue: https://github.com/komuw/wijisqs/pull/30

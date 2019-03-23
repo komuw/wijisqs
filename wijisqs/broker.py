@@ -1,7 +1,6 @@
 import wiji
 import time
 import random
-import string
 import typing
 import asyncio
 import logging
@@ -86,6 +85,9 @@ class SqsBroker(wiji.broker.BaseBroker):
             raise ValueError(
                 "AWS does not alow less than 1 or greater than 10 `MaxNumberOfMessages`"
             )
+        # The difference between `DelaySeconds` and `VisibilityTimeout` is;
+        # `DelaySeconds`      -> a message is hidden when it is first added to queue
+        # `VisibilityTimeout` -> a message is hidden only after it is consumed from the queue.
         self.DelaySeconds = DelaySeconds
 
         self.aws_region_name = aws_region_name
@@ -116,6 +118,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         #     "thread2": botocore.client.SQS,
         # }
         self._PER_THREAD_STATE: typing.Dict[int, "botocore.client.SQS"] = {}
+
+        self.SHOULD_SHUT_DOWN: bool = False
 
     def _validate_args(
         self,
@@ -476,6 +480,17 @@ class SqsBroker(wiji.broker.BaseBroker):
     ) -> None:
         """
         """
+        if self.SHOULD_SHUT_DOWN:
+            self.logger.log(
+                logging.INFO,
+                {
+                    "event": "wijisqs.SqsBroker.enqueue",
+                    "stage": "end",
+                    "state": "cleanly shutting down broker.",
+                },
+            )
+            return None
+
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
@@ -495,7 +510,7 @@ class SqsBroker(wiji.broker.BaseBroker):
                     buffer_entries = sendBuf.give_me_ten()
                     for entry in buffer_entries:
                         thingy = {
-                            "Id": entry["id"],
+                            "Id": entry["task_id"],
                             "MessageBody": entry["msg_body"],
                             "DelaySeconds": entry["delay"],
                             "MessageAttributes": {
@@ -517,22 +532,20 @@ class SqsBroker(wiji.broker.BaseBroker):
                     )
                     # put the incoming one item into buffer
                     buffer_entry = {
-                        "id": "".join(random.choices(string.ascii_uppercase + string.digits, k=17)),
+                        "task_id": task_options.task_id,
                         "msg_body": item,
                         "delay": self._calculate_msg_delay(task_options=task_options),
                         "eta": task_options.eta,
-                        "task_id": task_options.task_id,
                         "task_hook_metadata": task_options.hook_metadata,
                     }
                     sendBuf.put(new_item=buffer_entry)
                 else:
                     # dont send, put in buffer
                     buffer_entry = {
-                        "id": "".join(random.choices(string.ascii_uppercase + string.digits, k=17)),
+                        "task_id": task_options.task_id,
                         "msg_body": item,
                         "delay": self._calculate_msg_delay(task_options=task_options),
                         "eta": task_options.eta,
-                        "task_id": task_options.task_id,
                         "task_hook_metadata": task_options.hook_metadata,
                     }
                     sendBuf.put(new_item=buffer_entry)
@@ -605,6 +618,18 @@ class SqsBroker(wiji.broker.BaseBroker):
         ) as executor:
             retry_count: int = 0
             while True:
+                if self.SHOULD_SHUT_DOWN:
+                    self.logger.log(
+                        logging.INFO,
+                        {
+                            "event": "wijisqs.SqsBroker.dequeue",
+                            "stage": "end",
+                            "state": "cleanly shutting down broker.",
+                        },
+                    )
+                    await asyncio.sleep(self.batching_duration)
+                    continue  # VERY IMPORTANT
+
                 if self.long_poll:
                     item = self._get_per_queue_recieveBuf(queue_name=queue_name).get()
                     if item:
@@ -741,3 +766,60 @@ class SqsBroker(wiji.broker.BaseBroker):
                 {"event": "wijisqs.SqsBroker._delete_message", "queue_name": queue_name}
             )
             self.logger.log(logging.DEBUG, response)
+
+    async def shutdown(self, queue_name: str, duration: int) -> None:
+        """
+        when this method is called:
+          1. wijisqs should halt all consumption from AWS sqs
+          2. it should halt any NEW publishing to sqs
+          3. for any messages that are in the `ReceiveBuffer`(received from SQS but yet to be processed);
+             - we do nothing since when we dequed the msg, we had set a `VisibilityTimeout` which will eventually expire and the
+               message will become available for dequeuing and execution by another consumer.
+          4. for any messages that are in the `SendBuffer`(yet to be sent to SQS);
+             - we should send these ones out immediatley.
+
+        All this things need to happen in parallel.
+        """
+        # 1. wijisqs should halt all consumption from AWS sqs
+        # 2. it should halt any NEW publishing to sqs
+        self.SHOULD_SHUT_DOWN: bool = True
+
+        # 3. for any messages that are in the `ReceiveBuffer`(received from SQS but yet to be processed);
+        # we do nothing, `VisibilityTimeout` will solve that problem for us.
+
+        # 4. for any messages that are in the `SendBuffer`(yet to be sent to SQS);
+        # - we should send these ones out immediatley.
+        with concurrent.futures.ThreadPoolExecutor(
+            thread_name_prefix=self._thread_name_prefix
+        ) as executor:
+
+            # take items from buffer & send batch
+            sendBuf = self._get_per_queue_sendBuf(queue_name=queue_name)
+            while sendBuf.size() > 0:
+                # while there are still any messages in the buffer,
+                # send them in batches of 10.
+                Entries = []
+                buffer_entries = sendBuf.give_me_ten()
+                for entry in buffer_entries:
+                    thingy = {
+                        "Id": entry["task_id"],
+                        "MessageBody": entry["msg_body"],
+                        "DelaySeconds": entry["delay"],
+                        "MessageAttributes": {
+                            "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
+                            "task_eta": {"DataType": "String", "StringValue": entry["eta"]},
+                            "task_id": {"DataType": "String", "StringValue": entry["task_id"]},
+                            "task_hook_metadata": {
+                                "DataType": "String",
+                                "StringValue": entry.get("task_hook_metadata") or "empty",
+                            },
+                        },
+                    }
+                    Entries.append(thingy)
+
+                await self._get_loop().run_in_executor(
+                    executor,
+                    functools.partial(
+                        self._send_message_batch, Entries=Entries, queue_name=queue_name
+                    ),
+                )
