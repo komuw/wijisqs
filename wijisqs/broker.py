@@ -767,7 +767,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             )
             self.logger.log(logging.DEBUG, response)
 
-    async def shutdown(self, queue_name: str, duration: int) -> None:
+    async def shutdown(self, queue_name: str, duration: float) -> None:
         """
         when this method is called:
           1. wijisqs should halt all consumption from AWS sqs

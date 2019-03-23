@@ -1,6 +1,9 @@
 ## `wijisqs` changelog:
 most recent version is listed first.
 
+## **version:** v0.2.2
+- bugfix; broker drain duration ought to be a float.
+
 ## **version:** v0.2.1
 implemented clean shutdown: https://github.com/komuw/wijisqs/pull/32
 
