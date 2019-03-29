@@ -39,17 +39,8 @@ class MockSqs:
 
     @staticmethod
     def mock_proto():
-        return wiji.protocol.Protocol(
-            version=1,
-            task_id="task_id",
-            eta="2019-03-12T14:21:27.751149+00:00",
-            current_retries=0,
-            max_retries=0,
-            log_id="log_id",
-            hook_metadata="hook_metadata",
-            argsy=(),
-            kwargsy={"mock_protocol_kwarg": "mock_protocol_kwarg"},
-        )
+        task_options = wiji.task.TaskOptions(eta=0.00, max_retries=0, hook_metadata="hook_metadata")
+        return wiji.protocol.Protocol(version=1, task_options=task_options)
 
     def create_queue(self, *args, **kwargs):
         queue_name = kwargs["QueueName"]
