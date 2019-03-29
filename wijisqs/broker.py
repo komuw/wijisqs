@@ -728,6 +728,7 @@ class SqsBroker(wiji.broker.BaseBroker):
     async def done(self, item: str, queue_name: str, state: wiji.task.TaskState) -> None:
         """
         """
+
         task_options = json.loads(item)["task_options"]
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix

@@ -40,6 +40,7 @@ class MockSqs:
     @staticmethod
     def mock_proto():
         task_options = wiji.task.TaskOptions(eta=0.00, max_retries=0, hook_metadata="hook_metadata")
+        task_options.task_id = "Mock_taskID"
         return wiji.protocol.Protocol(version=1, task_options=task_options)
 
     def create_queue(self, *args, **kwargs):
@@ -536,9 +537,21 @@ class TestBroker(TestCase):
             print_queue_name = "PrintTask_Queue"
             myPrintTask = PrintTask(the_broker=broker, queue_name=print_queue_name)
             myPrintTask.synchronous_delay()
+            body = {
+                "version": 1,
+                "task_options": {
+                    "eta": "2019-03-29T13:39:49.322722+00:00",
+                    "task_id": myPrintTask._get_task_options().task_id,
+                    "current_retries": 0,
+                    "max_retries": 0,
+                    "hook_metadata": "hook_metadata",
+                    "args": [],
+                    "kwargs": {},
+                },
+            }
             mock_boto_client.return_value = MockSqs(
                 mock_msg_to_receive=mock_okay_resp(
-                    task_id=myPrintTask.task_options.task_id, Body=MockSqs.mock_proto().json()
+                    task_id=body["task_options"]["task_id"], Body=json.dumps(body)
                 )
             )
             # consume tasks
