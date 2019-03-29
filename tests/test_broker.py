@@ -212,23 +212,46 @@ class TestBroker(TestCase):
                 # TODO: asser things
 
     def test_task_dequeuing(self):
+        def mock_okay_resp(task_id, Body):
+            return {
+                "Messages": [
+                    {
+                        "MessageId": "MOCK_MessageId-0",
+                        "ReceiptHandle": "MOCK_ReceiptHandle-0",
+                        "MD5OfBody": "MOCK_MD5OfBody-0",
+                        "Body": Body,
+                        "Attributes": {"MOCK_Attributes_KEY-0": "MOCK_Attributes_Value-0"},
+                        "MD5OfMessageAttributes": "MOCK_MD5OfMessageAttributes-0",
+                        "MessageAttributes": {
+                            "task_id": {"StringValue": task_id, "DataType": "string"},
+                            "task_eta": {"StringValue": "MOCK_task_eta-0", "DataType": "string"},
+                            "task_hook_metadata": {
+                                "StringValue": "MOCK_task_hook_metadata-0",
+                                "DataType": "string",
+                            },
+                        },
+                    }
+                ]
+            }
+
         class AdderTask(wiji.task.Task):
             async def run(self, a, b):
                 res = a + b
                 return res
 
         kwargs = {"a": 78, "b": 101}
-        proto = wiji.protocol.Protocol(
-            version=1,
-            task_id="task_id",
-            eta="2019-03-12T14:21:27.751149+00:00",
-            current_retries=0,
-            max_retries=0,
-            log_id="log_id",
-            hook_metadata="hook_metadata",
-            argsy=(),
-            kwargsy=kwargs,
-        )
+        body = {
+            "version": 1,
+            "task_options": {
+                "eta": "2019-03-29T13:39:49.322722+00:00",
+                "task_id": "mock_task_id",
+                "current_retries": 0,
+                "max_retries": 0,
+                "hook_metadata": "hook_metadata",
+                "args": [],
+                "kwargs": kwargs,
+            },
+        }
 
         queue_tags = {
             "Name": "testSqs",
@@ -238,7 +261,11 @@ class TestBroker(TestCase):
             "Status": "deprecated",
         }
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
-            mock_boto_client.return_value = MockSqs(proto=proto)
+            mock_boto_client.return_value = MockSqs(
+                mock_msg_to_receive=mock_okay_resp(
+                    task_id=body["task_options"]["task_id"], Body=json.dumps(body)
+                )
+            )
 
             brokers = [
                 wijisqs.SqsBroker(
@@ -286,10 +313,10 @@ class TestBroker(TestCase):
                 worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
                 dequeued_item = self._run(worker.consume_tasks(TESTING=True))
                 self.assertEqual(dequeued_item["version"], 1)
-                self.assertEqual(dequeued_item["current_retries"], 0)
-                self.assertEqual(dequeued_item["max_retries"], 0)
-                self.assertEqual(dequeued_item["args"], [])
-                self.assertEqual(dequeued_item["kwargs"], kwargs)
+                self.assertEqual(dequeued_item["task_options"]["current_retries"], 0)
+                self.assertEqual(dequeued_item["task_options"]["max_retries"], 0)
+                self.assertEqual(dequeued_item["task_options"]["args"], [])
+                self.assertEqual(dequeued_item["task_options"]["kwargs"], kwargs)
 
     def test_receive_no_message(self):
         mock_okay_resp = {
