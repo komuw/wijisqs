@@ -636,7 +636,10 @@ class TestBatching(TestCase):
             )
 
             self.assertTrue(mock_send_message.called)
-            self.assertEqual(json.loads(mock_send_message.call_args[1]["item"])["kwargs"], kwargsy)
+            self.assertEqual(
+                json.loads(mock_send_message.call_args[1]["item"])["task_options"]["kwargs"],
+                kwargsy,
+            )
             self.assertFalse(mock_send_message_batch.called)
             self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 0)
 
@@ -713,8 +716,8 @@ class TestBatching(TestCase):
             self.assertEqual(len(mock_send_message_batch.call_args[1]["Entries"]), 10)
             self.assertEqual(
                 json.loads(mock_send_message_batch.call_args[1]["Entries"][9]["MessageBody"])[
-                    "kwargs"
-                ],
+                    "task_options"
+                ]["kwargs"],
                 kwargsy,
             )
             # 4 messages are left
@@ -761,8 +764,8 @@ class TestBatching(TestCase):
             self.assertEqual(len(mock_send_message_batch.call_args[1]["Entries"]), 1)
             self.assertEqual(
                 json.loads(mock_send_message_batch.call_args[1]["Entries"][0]["MessageBody"])[
-                    "kwargs"
-                ],
+                    "task_options"
+                ]["kwargs"],
                 kwargsy,
             )
             # no messages left
