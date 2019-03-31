@@ -828,19 +828,13 @@ class TestLongPoll(TestCase):
 
         self.AdderTask = AdderTask
         self.queue_name = "WijiSqsTestQueue"
-
         self.kwargsy = {"a": 78, "b": 101}
-        self.proto = wiji.protocol.Protocol(
-            version=1,
-            task_id="task_id",
-            eta="2019-03-12T14:21:27.751149+00:00",
-            current_retries=0,
-            max_retries=0,
-            log_id="log_id",
-            hook_metadata="hook_metadata",
-            argsy=(),
-            kwargsy=self.kwargsy,
-        )
+
+        task_options = wiji.task.TaskOptions(eta=0.00, max_retries=0, hook_metadata="hook_metadata")
+        task_options.task_id = "Mock_taskID"
+        task_options.args = ()
+        task_options.kwargs = self.kwargsy
+        self.proto = wiji.protocol.Protocol(version=1, task_options=task_options)
 
     def tearDown(self):
         pass
@@ -875,10 +869,10 @@ class TestLongPoll(TestCase):
             worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
             dequeued_item = self._run(worker.consume_tasks(TESTING=True))
             self.assertEqual(dequeued_item["version"], 1)
-            self.assertEqual(dequeued_item["current_retries"], 0)
-            self.assertEqual(dequeued_item["max_retries"], 0)
-            self.assertEqual(dequeued_item["args"], [])
-            self.assertEqual(dequeued_item["kwargs"], self.kwargsy)
+            self.assertEqual(dequeued_item["task_options"]["current_retries"], 0)
+            self.assertEqual(dequeued_item["task_options"]["max_retries"], 0)
+            self.assertEqual(dequeued_item["task_options"]["args"], [])
+            self.assertEqual(dequeued_item["task_options"]["kwargs"], self.kwargsy)
 
             self.assertFalse(mock_receive_message_POLL.called)
             self.assertTrue(mock_receive_message_NO_poll.called)
@@ -909,10 +903,10 @@ class TestLongPoll(TestCase):
             worker = wiji.Worker(the_task=myAdderTask, worker_id="TestWorkerID1")
             dequeued_item = self._run(worker.consume_tasks(TESTING=True))
             self.assertEqual(dequeued_item["version"], 1)
-            self.assertEqual(dequeued_item["current_retries"], 0)
-            self.assertEqual(dequeued_item["max_retries"], 0)
-            self.assertEqual(dequeued_item["args"], [])
-            self.assertEqual(dequeued_item["kwargs"], self.kwargsy)
+            self.assertEqual(dequeued_item["task_options"]["current_retries"], 0)
+            self.assertEqual(dequeued_item["task_options"]["max_retries"], 0)
+            self.assertEqual(dequeued_item["task_options"]["args"], [])
+            self.assertEqual(dequeued_item["task_options"]["kwargs"], self.kwargsy)
             # SQS only returns `broker.MaxNumberOfMessages` number of messages upto a maximum of 10
             # and then one message gets consumed by `wiji`. So number left in buffer is broker.MaxNumberOfMessages-1
             self.assertEqual(
