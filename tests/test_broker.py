@@ -958,20 +958,16 @@ class TestShutdown(TestCase):
             for i in range(0, num_msgs_to_queue_in_buffer):
                 # queue more than the usual 10 messages that a buffer usually has
                 buffer_entry = {
-                    "task_id": myAdderTask.task_options.task_id,
+                    "task_id": "myAdderTask.task_options.task_id",
                     "msg_body": "msg_body-{0}".format(i),
-                    "delay": broker._calculate_msg_delay(task_options=myAdderTask.task_options),
-                    "eta": myAdderTask.task_options.eta,
-                    "task_hook_metadata": myAdderTask.task_options.hook_metadata,
+                    "delay": 1.0,
+                    "eta": "myAdderTask.task_options.eta",
+                    "task_hook_metadata": "hook_metadata",
                 }
                 sendBuf.put(new_item=buffer_entry)
 
             self.assertEqual(sendBuf.size(), num_msgs_to_queue_in_buffer)
-            self._run(
-                broker.shutdown(
-                    queue_name=self.queue_name, duration=myAdderTask.task_options.drain_duration / 2
-                )
-            )
+            self._run(broker.shutdown(queue_name=self.queue_name, duration=1))
             self.assertEqual(sendBuf.size(), 0)
 
     def test_shutdown_multiple_queues(self):
@@ -1023,17 +1019,7 @@ class TestShutdown(TestCase):
                 broker._get_per_queue_sendBuf(queue_name="PrintTaskQueue").size(),
                 num_msgs_to_queue_in_buffer,
             )
-            self._run(
-                broker.shutdown(
-                    queue_name="AdderTaskQueue",
-                    duration=myAdderTask.task_options.drain_duration / 2,
-                )
-            )
-            self._run(
-                broker.shutdown(
-                    queue_name="PrintTaskQueue",
-                    duration=myPrintTask.task_options.drain_duration / 2,
-                )
-            )
+            self._run(broker.shutdown(queue_name="AdderTaskQueue", duration=1))
+            self._run(broker.shutdown(queue_name="PrintTaskQueue", duration=1))
             self.assertEqual(broker._get_per_queue_sendBuf(queue_name="AdderTaskQueue").size(), 0)
             self.assertEqual(broker._get_per_queue_sendBuf(queue_name="PrintTaskQueue").size(), 0)
