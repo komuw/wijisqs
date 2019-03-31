@@ -951,7 +951,6 @@ class TestShutdown(TestCase):
                 batch_send=True,
             )
             self._run(broker.check(queue_name=self.queue_name))
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
 
             num_msgs_to_queue_in_buffer = 63
             sendBuf = broker._get_per_queue_sendBuf(queue_name=self.queue_name)
@@ -992,9 +991,6 @@ class TestShutdown(TestCase):
             )
             self._run(broker.check(queue_name="AdderTaskQueue"))
             self._run(broker.check(queue_name="PrintTaskQueue"))
-
-            myAdderTask = AdderTask(the_broker=broker, queue_name="AdderTaskQueue")
-            myPrintTask = PrintTask(the_broker=broker, queue_name="PrintTaskQueue")
 
             num_msgs_to_queue_in_buffer = 63
 
