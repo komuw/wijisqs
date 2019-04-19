@@ -131,7 +131,7 @@ class TestBroker(TestCase):
     """
 
     def setUp(self):
-        self.queue_name = "WijiSqsTestQueue"
+        pass
 
     def tearDown(self):
         pass
@@ -166,11 +166,6 @@ class TestBroker(TestCase):
         self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
 
     def test_task_queuing(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
@@ -207,7 +202,16 @@ class TestBroker(TestCase):
                 ),
             ]
             for broker in brokers:
-                myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+
+                class AdderTask(wiji.task.Task):
+                    the_broker = broker
+                    queue_name = "AdderTaskQueue1"
+
+                    async def run(self, a, b):
+                        res = a + b
+                        return res
+
+                myAdderTask = AdderTask()
                 myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
                 # TODO: asser things
 
@@ -233,11 +237,6 @@ class TestBroker(TestCase):
                     }
                 ]
             }
-
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
 
         kwargs = {"a": 78, "b": 101}
         body = {
@@ -305,8 +304,17 @@ class TestBroker(TestCase):
             ]
 
             for broker in brokers:
+
+                class AdderTask(wiji.task.Task):
+                    the_broker = broker
+                    queue_name = "AdderTaskQueue1"
+
+                    async def run(self, a, b):
+                        res = a + b
+                        return res
+
                 # queue tasks
-                myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+                myAdderTask = AdderTask()
                 myAdderTask.synchronous_delay(a=kwargs["a"], b=kwargs["b"])
 
                 # consume tasks
@@ -384,19 +392,8 @@ class TestBroker(TestCase):
             self.assertEqual(msg, None)
 
     def test_create_queue_called_once(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
-        class PrintTask(wiji.task.Task):
-            async def run(self):
-                print("PrintTask executed")
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
-            # mock_create_queue.return_value = None
-
             broker = wijisqs.SqsBroker(
                 aws_region_name="eu-west-1",
                 aws_access_key_id="aws_access_key_id",
@@ -405,24 +402,29 @@ class TestBroker(TestCase):
                 long_poll=False,
             )
 
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTaskQueue1"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask"
+
+                async def run(self):
+                    print("PrintTask executed")
+
             # queue tasks
-            myAdderTask = AdderTask(
-                the_broker=broker, queue_name="AdderTask_test_create_queue_called_once"
-            )
-            myPrintTask = PrintTask(
-                the_broker=broker, queue_name="PrintTask_test_create_queue_called_once"
-            )
-            myAdderTask.synchronous_delay(a=23, b=14)
-            myPrintTask.synchronous_delay()
+            AdderTask().synchronous_delay(a=23, b=14)
+            PrintTask().synchronous_delay()
 
             # TODO: implement this
             print("# TODO: implement this")
 
     def test_queurl_available(self):
-        class PrintTask(wiji.task.Task):
-            async def run(self, **kwargs):
-                print("PrintTask executed")
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
@@ -432,17 +434,18 @@ class TestBroker(TestCase):
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
             )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
             # queue tasks
-            myPrintTask = PrintTask(
-                the_broker=broker, queue_name="PrintTask_test_create_queue_called_once"
-            )
-            myPrintTask.synchronous_delay()
-            self.assertIsNotNone(
-                broker._get_per_queue_url(queue_name="PrintTask_test_create_queue_called_once")
-            )
-            self.assertIsInstance(
-                broker._get_per_queue_url(queue_name="PrintTask_test_create_queue_called_once"), str
-            )
+            PrintTask().synchronous_delay()
+            self.assertIsNotNone(broker._get_per_queue_url(queue_name=PrintTask.queue_name))
+            self.assertIsInstance(broker._get_per_queue_url(queue_name=PrintTask.queue_name), str)
 
     def test_retries(self):
         res = wijisqs.SqsBroker._retry_after(-110)
@@ -489,15 +492,6 @@ class TestBroker(TestCase):
             self.assertTrue(mock_retry_after.called)
 
     def test_multiple_queues_one_broker(self):
-        class PrintTask(wiji.task.Task):
-            async def run(self, **kwargs):
-                print("PrintTask executed")
-
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
 
@@ -507,14 +501,30 @@ class TestBroker(TestCase):
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
             )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
             # queue tasks
-            print_queue_name = "PrintTask_Queue"
-            myPrintTask = PrintTask(the_broker=broker, queue_name=print_queue_name)
+            print_queue_name = PrintTask.queue_name
+            myPrintTask = PrintTask()
             myPrintTask.synchronous_delay()
             myPrintTask.synchronous_delay()
             myPrintTask.synchronous_delay()
-            adder_queue_name = "AdderTask_Queue"
-            myAdderTask = AdderTask(the_broker=broker, queue_name=adder_queue_name)
+            adder_queue_name = AdderTask.queue_name
+            myAdderTask = AdderTask()
             myAdderTask.synchronous_delay(a=12, b=55)
             myAdderTask.synchronous_delay(a=2, b=55)
             myAdderTask.synchronous_delay(a=133, b=545)
@@ -527,10 +537,6 @@ class TestBroker(TestCase):
             self.assertIn(adder_queue_name, broker._get_per_queue_url(adder_queue_name))
 
     def test_task_deletion(self):
-        class PrintTask(wiji.task.Task):
-            async def run(self, **kwargs):
-                print("PrintTask executed")
-
         def mock_okay_resp(task_id, Body):
             return {
                 "Messages": [
@@ -560,9 +566,16 @@ class TestBroker(TestCase):
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
             )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
             # queue tasks
-            print_queue_name = "PrintTask_Queue"
-            myPrintTask = PrintTask(the_broker=broker, queue_name=print_queue_name)
+            myPrintTask = PrintTask()
             myPrintTask.synchronous_delay()
             body = {
                 "version": 1,
@@ -588,14 +601,10 @@ class TestBroker(TestCase):
 
             # item has been deleted
             # `Worker.worker.consume_tasks` calls `broker.done` at the end so broker should have deleted the message
-            self.assertEqual(len(broker._get_per_queue_task_receipt(print_queue_name)), 0)
+            self.assertEqual(len(broker._get_per_queue_task_receipt(PrintTask.queue_name)), 0)
 
     def test_threading(self):
         # TODO: fix this test. it is racy
-
-        class PrintTask(wiji.task.Task):
-            async def run(self, **kwargs):
-                print("PrintTask executed")
 
         # for this test we SHOULD NOT mock _get_per_thread_client
         with mock.patch("wijisqs.SqsBroker._sqs_client") as mock_boto_client:
@@ -607,13 +616,21 @@ class TestBroker(TestCase):
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
             )
-            self._run(broker.check(queue_name=self.queue_name))
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            self._run(broker.check(queue_name=PrintTask.queue_name))
             max_num_threads = 5
             thread_name = "test_threading-thread-prefix"
 
             def worker_thread(num):
                 current_thread_identity = threading.get_ident()
-                broker._tag_queue(queue_name=self.queue_name)
+                broker._tag_queue(queue_name=PrintTask.queue_name)
                 self.assertIsNotNone(broker._PER_THREAD_STATE.get(current_thread_identity))
                 thread_names = []
                 for t in threading.enumerate():
@@ -639,7 +656,7 @@ class TestBatching(TestCase):
     """
 
     def setUp(self):
-        self.queue_name = "WijiSqsTestBatchingQueue"
+        pass
 
     def tearDown(self):
         pass
@@ -650,11 +667,6 @@ class TestBatching(TestCase):
         return loop.run_until_complete(coro)
 
     def test_no_batching(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         kwargsy = {"a": 4, "b": 6}
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
@@ -670,8 +682,15 @@ class TestBatching(TestCase):
                 batch_send=False,
             )
 
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
-            myAdderTask.synchronous_delay(
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
+            AdderTask().synchronous_delay(
                 a=kwargsy["a"], b=kwargsy["b"], task_options=wiji.task.TaskOptions(eta=34.56)
             )
 
@@ -681,19 +700,13 @@ class TestBatching(TestCase):
                 kwargsy,
             )
             self.assertFalse(mock_send_message_batch.called)
-            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 0)
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 0)
 
     def test_yes_batching_one_message(self):
         """
         test that even when batching is ON, no message is sent to AWS.
         instead it goes to buffer
         """
-
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         kwargsy = {"a": 4, "b": 6}
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
@@ -709,26 +722,27 @@ class TestBatching(TestCase):
                 batch_send=True,
             )
 
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
-            myAdderTask.synchronous_delay(
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
+            AdderTask().synchronous_delay(
                 a=kwargsy["a"], b=kwargsy["b"], task_options=wiji.task.TaskOptions(eta=34.56)
             )
 
             self.assertFalse(mock_send_message.called)
             self.assertFalse(mock_send_message_batch.called)
-            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 1)
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 1)
 
     def test_yes_batching_13_message(self):
         """
         test that even when batching is ON, and we have more than 10messages; some are sent to AWS
         and the remainder are left
         """
-
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         kwargsy = {"a": 4, "b": 6}
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
@@ -744,11 +758,18 @@ class TestBatching(TestCase):
                 batch_send=True,
             )
 
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
             num_msgs = []
             for _ in range(1, 15):
                 num_msgs.append(1)
-                myAdderTask.synchronous_delay(a=kwargsy["a"], b=kwargsy["b"])
+                AdderTask().synchronous_delay(a=kwargsy["a"], b=kwargsy["b"])
             self.assertEqual(len(num_msgs), 14)
 
             self.assertFalse(mock_send_message.called)
@@ -761,7 +782,7 @@ class TestBatching(TestCase):
                 kwargsy,
             )
             # 4 messages are left
-            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 4)
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 4)
 
     def test_yes_batching_one_message_long_duration(self):
         """
@@ -769,12 +790,6 @@ class TestBatching(TestCase):
         if the duration is longer than `batching_duration`, then the one message is sent to AWS
         and the one incoming message saved to buffer
         """
-
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         kwargsy = {"a": 4, "b": 6}
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
             "wijisqs.SqsBroker._send_message"
@@ -793,7 +808,15 @@ class TestBatching(TestCase):
                 batching_duration=batching_duration,
             )
 
-            myAdderTask = AdderTask(the_broker=broker, queue_name=self.queue_name)
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
+            myAdderTask = AdderTask()
             myAdderTask.synchronous_delay(a=kwargsy["a"], b=kwargsy["b"])
 
             time.sleep(batching_duration * 2)
@@ -809,7 +832,7 @@ class TestBatching(TestCase):
                 kwargsy,
             )
             # no messages left
-            self.assertEqual(broker._get_per_queue_sendBuf(self.queue_name).size(), 1)
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 1)
 
 
 class TestLongPoll(TestCase):
@@ -821,13 +844,6 @@ class TestLongPoll(TestCase):
     """
 
     def setUp(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
-        self.AdderTask = AdderTask
-        self.queue_name = "WijiSqsTestQueue"
         self.kwargsy = {"a": 78, "b": 101}
 
         task_options = wiji.task.TaskOptions(eta=0.00, max_retries=0, hook_metadata="hook_metadata")
@@ -861,8 +877,16 @@ class TestLongPoll(TestCase):
                 long_poll=False,
             )
 
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
             # queue tasks
-            myAdderTask = self.AdderTask(the_broker=broker, queue_name=self.queue_name)
+            myAdderTask = AdderTask()
             myAdderTask.synchronous_delay(a=self.kwargsy["a"], b=self.kwargsy["b"])
 
             # consume tasks
@@ -876,7 +900,7 @@ class TestLongPoll(TestCase):
 
             self.assertFalse(mock_receive_message_POLL.called)
             self.assertTrue(mock_receive_message_NO_poll.called)
-            self.assertEqual(broker._get_per_queue_recieveBuf(self.queue_name).size(), 0)
+            self.assertEqual(broker._get_per_queue_recieveBuf(AdderTask.queue_name).size(), 0)
 
     def test_yes_poll(self):
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
@@ -891,8 +915,16 @@ class TestLongPoll(TestCase):
                 long_poll=True,
             )
 
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
             # queue tasks
-            myAdderTask = self.AdderTask(the_broker=broker, queue_name=self.queue_name)
+            myAdderTask = AdderTask()
             num_msgs = []
             for _ in range(1, 15):
                 num_msgs.append(1)
@@ -910,7 +942,7 @@ class TestLongPoll(TestCase):
             # SQS only returns `broker.MaxNumberOfMessages` number of messages upto a maximum of 10
             # and then one message gets consumed by `wiji`. So number left in buffer is broker.MaxNumberOfMessages-1
             self.assertEqual(
-                broker._get_per_queue_recieveBuf(self.queue_name).size(),
+                broker._get_per_queue_recieveBuf(AdderTask.queue_name).size(),
                 (broker.MaxNumberOfMessages - 1),
             )
 
@@ -935,11 +967,6 @@ class TestShutdown(TestCase):
         return loop.run_until_complete(coro)
 
     def test_shutdown(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
             broker = wijisqs.SqsBroker(
@@ -950,6 +977,15 @@ class TestShutdown(TestCase):
                 long_poll=True,
                 batch_send=True,
             )
+
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
             self._run(broker.check(queue_name=self.queue_name))
 
             num_msgs_to_queue_in_buffer = 63
@@ -970,15 +1006,6 @@ class TestShutdown(TestCase):
             self.assertEqual(sendBuf.size(), 0)
 
     def test_shutdown_multiple_queues(self):
-        class AdderTask(wiji.task.Task):
-            async def run(self, a, b):
-                res = a + b
-                return res
-
-        class PrintTask(wiji.task.Task):
-            async def run(self):
-                print("PrintTask executed")
-
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
             mock_boto_client.return_value = MockSqs()
             broker = wijisqs.SqsBroker(

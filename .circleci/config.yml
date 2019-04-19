@@ -15,6 +15,7 @@ jobs:
             pwd
             sudo apt -y install pandoc
             sudo pip install -e .[dev,test]
+            sudo pip install wiji==0.1.6b3
             find . -name '*.pyc' -delete;find . -name '__pycache__' -delete | xargs echo
       
       - run:
