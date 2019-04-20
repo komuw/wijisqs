@@ -1,6 +1,10 @@
 ## `wijisqs` changelog:
 most recent version is listed first.
 
+
+## **version:** v0.4.0-beta.1
+- upgrade to latest `wiji` version and handle it's new changes: https://github.com/komuw/wijisqs/pull/40  
+
 ## **version:** v0.2.2
 - bugfix; broker drain duration ought to be a float.
 
