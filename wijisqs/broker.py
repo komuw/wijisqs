@@ -1,5 +1,6 @@
 import wiji
 import time
+import json
 import random
 import typing
 import asyncio
@@ -475,9 +476,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         except Exception as e:
             raise e
 
-    async def enqueue(
-        self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
-    ) -> None:
+    async def enqueue(self, queue_name: str, item: str) -> None:
         """
         """
         if self.SHOULD_SHUT_DOWN:
@@ -491,6 +490,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             )
             return None
 
+        task_options = json.loads(item)["task_options"]
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
@@ -532,21 +532,21 @@ class SqsBroker(wiji.broker.BaseBroker):
                     )
                     # put the incoming one item into buffer
                     buffer_entry = {
-                        "task_id": task_options.task_id,
+                        "task_id": task_options["task_id"],
                         "msg_body": item,
                         "delay": self._calculate_msg_delay(task_options=task_options),
-                        "eta": task_options.eta,
-                        "task_hook_metadata": task_options.hook_metadata,
+                        "eta": task_options["eta"],
+                        "task_hook_metadata": task_options["hook_metadata"],
                     }
                     sendBuf.put(new_item=buffer_entry)
                 else:
                     # dont send, put in buffer
                     buffer_entry = {
-                        "task_id": task_options.task_id,
+                        "task_id": task_options["task_id"],
                         "msg_body": item,
                         "delay": self._calculate_msg_delay(task_options=task_options),
-                        "eta": task_options.eta,
-                        "task_hook_metadata": task_options.hook_metadata,
+                        "eta": task_options["eta"],
+                        "task_hook_metadata": task_options["hook_metadata"],
                     }
                     sendBuf.put(new_item=buffer_entry)
             else:
@@ -560,9 +560,9 @@ class SqsBroker(wiji.broker.BaseBroker):
                     ),
                 )
 
-    def _calculate_msg_delay(self, task_options: wiji.task.TaskOptions):
+    def _calculate_msg_delay(self, task_options: typing.Dict[str, typing.Any]):
         now = datetime.datetime.now(tz=datetime.timezone.utc)
-        task_eta = task_options.eta
+        task_eta = task_options["eta"]
         task_eta = wiji.protocol.Protocol._from_isoformat(task_eta)
 
         delay = self.DelaySeconds
@@ -574,7 +574,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         return delay
 
     def _send_message(
-        self, item: str, queue_name: str, task_options: wiji.task.TaskOptions
+        self, item: str, queue_name: str, task_options: typing.Dict[str, typing.Any]
     ) -> None:
         delay = self._calculate_msg_delay(task_options=task_options)
         response = self._get_per_thread_client().send_message(
@@ -584,11 +584,11 @@ class SqsBroker(wiji.broker.BaseBroker):
             DelaySeconds=delay,
             MessageAttributes={
                 "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
-                "task_eta": {"DataType": "String", "StringValue": task_options.eta},
-                "task_id": {"DataType": "String", "StringValue": task_options.task_id},
+                "task_eta": {"DataType": "String", "StringValue": task_options["eta"]},
+                "task_id": {"DataType": "String", "StringValue": task_options["task_id"]},
                 "task_hook_metadata": {
                     "DataType": "String",
-                    "StringValue": task_options.hook_metadata or "empty",
+                    "StringValue": task_options.get("hook_metadata") or "empty",
                 },
             },
         )
@@ -725,15 +725,11 @@ class SqsBroker(wiji.broker.BaseBroker):
             else:
                 return None
 
-    async def done(
-        self,
-        item: str,
-        queue_name: str,
-        task_options: wiji.task.TaskOptions,
-        state: wiji.task.TaskState,
-    ) -> None:
+    async def done(self, item: str, queue_name: str, state: wiji.task.TaskState) -> None:
         """
         """
+
+        task_options = json.loads(item)["task_options"]
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix
         ) as executor:
@@ -752,11 +748,11 @@ class SqsBroker(wiji.broker.BaseBroker):
         self,
         item: str,
         queue_name: str,
-        task_options: wiji.task.TaskOptions,
+        task_options: typing.Dict[str, typing.Any],
         state: wiji.task.TaskState,
     ) -> None:
         ReceiptHandle = self._get_per_queue_task_receipt(queue_name=queue_name).pop(
-            task_options.task_id, None
+            task_options["task_id"], None
         )
         if ReceiptHandle:
             response = self._get_per_thread_client().delete_message(
