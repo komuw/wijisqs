@@ -35,20 +35,23 @@ import wiji
 import wijisqs
 import asyncio
 
-class AdderTask(wiji.task.Task):
-    async def run(self, a, b):
-        result = a + b
-        print("\nresult: {0}\n".format(result))
-        return result
-
 broker = wijisqs.SqsBroker(
                 aws_region_name="aws_region_name",
                 aws_access_key_id=os.environ.get("aws_access_key_id"),
                 aws_secret_access_key=os.environ.get("aws_secret_access_key"),
             )
-myAdderTask = AdderTask(the_broker=broker, queue_name="AdderTaskQueue1")
+
+class AdderTask(wiji.task.Task):
+    the_broker = broker
+    queue_name = "AdderTaskQueue1"
+
+    async def run(self, a, b):
+        result = a + b
+        print("\nresult: {0}\n".format(result))
+        return result
 
 # queue some tasks
+myAdderTask = AdderTask()
 myAdderTask.synchronous_delay(a=4, b=37)
 myAdderTask.synchronous_delay(a=67, b=847)
 
