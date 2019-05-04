@@ -2,6 +2,11 @@
 most recent version is listed first.    
 
 
+## **version:** v0.4.0
+- for empty long-polled queues, sleep exponetially: https://github.com/komuw/wijisqs/pull/43
+- cache the event loop for perfomance reasons: https://github.com/komuw/wijisqs/pull/44
+- upgrade to latest `wiji` version and handle it's new changes: https://github.com/komuw/wijisqs/pull/40
+
 ## **version:** v0.4.0-beta.2
 - for empty long-polled queues, sleep exponetially: https://github.com/komuw/wijisqs/pull/43
 - cache the event loop for perfomance reasons: https://github.com/komuw/wijisqs/pull/44
