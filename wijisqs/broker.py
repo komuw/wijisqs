@@ -120,7 +120,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         # }
         self._PER_THREAD_STATE: typing.Dict[int, "botocore.client.SQS"] = {}
 
-        self.SHOULD_SHUT_DOWN: bool = False
+        self._SHOULD_SHUT_DOWN: bool = False
+        self._LOOP: typing.Union[None, asyncio.events.AbstractEventLoop] = None
 
     def _validate_args(
         self,
@@ -289,14 +290,19 @@ class SqsBroker(wiji.broker.BaseBroker):
         if queue_tags and len(queue_tags) > 50:
             raise ValueError("""AWS does not recommend setting more than 50 `queue_tags`""")
 
-    @staticmethod
-    def _get_loop():
+    def _get_loop(self,):
+        if self._LOOP:
+            return self._LOOP
+
         try:
             loop: asyncio.events.AbstractEventLoop = asyncio.get_running_loop()
         except RuntimeError:
             loop: asyncio.events.AbstractEventLoop = asyncio.get_event_loop()
         except Exception as e:
             raise e
+
+        # cache event loop
+        self._LOOP = loop
         return loop
 
     def _sanity_check_logger(self, event: str) -> None:
@@ -479,7 +485,7 @@ class SqsBroker(wiji.broker.BaseBroker):
     async def enqueue(self, queue_name: str, item: str) -> None:
         """
         """
-        if self.SHOULD_SHUT_DOWN:
+        if self._SHOULD_SHUT_DOWN:
             self.logger.log(
                 logging.INFO,
                 {
@@ -618,7 +624,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         ) as executor:
             retry_count: int = 0
             while True:
-                if self.SHOULD_SHUT_DOWN:
+                if self._SHOULD_SHUT_DOWN:
                     self.logger.log(
                         logging.INFO,
                         {
@@ -795,7 +801,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         """
         # 1. wijisqs should halt all consumption from AWS sqs
         # 2. it should halt any NEW publishing to sqs
-        self.SHOULD_SHUT_DOWN: bool = True
+        self._SHOULD_SHUT_DOWN: bool = True
 
         # 3. for any messages that are in the `ReceiveBuffer`(received from SQS but yet to be processed);
         # we do nothing, `VisibilityTimeout` will solve that problem for us.
