@@ -479,17 +479,27 @@ class TestBroker(TestCase):
             mock_boto_client.return_value = MockSqs(mock_msg_to_receive=mock_empty_resp)
             mock_retry_after.return_value = 1
 
-            broker = wijisqs.SqsBroker(
-                aws_region_name="eu-west-1",
-                aws_access_key_id="aws_access_key_id",
-                aws_secret_access_key="aws_secret_access_key",
-                loglevel="DEBUG",
-                long_poll=False,
-            )
-            broker._get_queue_url(queue_name="TestQueue")
-            msg = self._run(broker.dequeue(queue_name="TestQueue", TESTING=True))
-            self.assertEqual(msg, '{"key": "mock_item"}')
-            self.assertTrue(mock_retry_after.called)
+            brokers = [
+                wijisqs.SqsBroker(
+                    aws_region_name="eu-west-1",
+                    aws_access_key_id="aws_access_key_id",
+                    aws_secret_access_key="aws_secret_access_key",
+                    loglevel="DEBUG",
+                    long_poll=False,
+                ),
+                wijisqs.SqsBroker(
+                    aws_region_name="eu-west-1",
+                    aws_access_key_id="aws_access_key_id",
+                    aws_secret_access_key="aws_secret_access_key",
+                    loglevel="DEBUG",
+                    long_poll=True,
+                ),
+            ]
+            for broker in brokers:
+                broker._get_queue_url(queue_name="TestQueue")
+                msg = self._run(broker.dequeue(queue_name="TestQueue", TESTING=True))
+                self.assertEqual(msg, '{"key": "mock_item"}')
+                self.assertTrue(mock_retry_after.called)
 
     def test_multiple_queues_one_broker(self):
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:

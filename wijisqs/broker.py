@@ -633,13 +633,30 @@ class SqsBroker(wiji.broker.BaseBroker):
                 if self.long_poll:
                     item = self._get_per_queue_recieveBuf(queue_name=queue_name).get()
                     if item:
+                        retry_count = 0
                         return item
                     else:
                         await self._get_loop().run_in_executor(
                             executor,
                             functools.partial(self._receive_message_POLL, queue_name=queue_name),
                         )
-                        await asyncio.sleep(1 / 117)
+                        interval = self._retry_after(retry_count)
+                        retry_count += 1
+                        self.logger.log(
+                            logging.INFO,
+                            {
+                                "event": "wijisqs.SqsBroker.dequeue",
+                                "stage": "end",
+                                "queue_name": queue_name,
+                                "state": "queue is empty. sleeping for {0} seconds".format(
+                                    interval
+                                ),
+                                "retry_count": retry_count,
+                            },
+                        )
+                        await asyncio.sleep(interval)
+                        if TESTING:
+                            return '{"key": "mock_item"}'
                 else:
                     item = await self._get_loop().run_in_executor(
                         executor,

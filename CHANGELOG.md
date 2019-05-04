@@ -1,6 +1,9 @@
 ## `wijisqs` changelog:
-most recent version is listed first.
+most recent version is listed first.    
 
+
+## **version:** v0.4.0-beta.2
+- for empty long-polled queues, sleep exponetially: https://github.com/komuw/wijisqs/pull/43
 
 ## **version:** v0.4.0-beta.1
 - upgrade to latest `wiji` version and handle it's new changes: https://github.com/komuw/wijisqs/pull/40  

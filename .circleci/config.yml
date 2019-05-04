@@ -15,7 +15,7 @@ jobs:
             pwd
             sudo apt -y install pandoc
             sudo pip install -e .[dev,test]
-            sudo pip install wiji==0.1.6b3
+            sudo pip install wiji==0.1.6b5
             find . -name '*.pyc' -delete;find . -name '__pycache__' -delete | xargs echo
       
       - run:
@@ -49,7 +49,7 @@ jobs:
             pwd
             sudo apt -y install pandoc
             sudo pip install -e .[dev,test]
-            sudo pip install wiji==0.1.6b3
+            sudo pip install wiji==0.1.6b5
             find . -name '*.pyc' -delete;find . -name '__pycache__' -delete | xargs echo
       - run:
           name: static-analysis
