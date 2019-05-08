@@ -1,6 +1,9 @@
 ## `wijisqs` changelog:
 most recent version is listed first.    
 
+## **version:** v0.4.1
+- For `long_poll` when we call AWS, get messages and populate `recieveBuf`; hand those msgs over to `wiji` right away instead of sleeping.   
+  This should lead to faster processing: https://github.com/komuw/wijisqs/pull/45
 
 ## **version:** v0.4.0
 - for empty long-polled queues, sleep exponetially: https://github.com/komuw/wijisqs/pull/43

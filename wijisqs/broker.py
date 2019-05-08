@@ -354,8 +354,7 @@ class SqsBroker(wiji.broker.BaseBroker):
         self._PER_THREAD_STATE.update({current_thread_identity: _sqs_client})
         return _sqs_client
 
-    @staticmethod
-    def _retry_after(current_retries: int) -> int:
+    def _retry_after(self, current_retries: int) -> int:
         """
         returns the number of seconds to retry after.
         retries will happen in this sequence;
@@ -366,9 +365,15 @@ class SqsBroker(wiji.broker.BaseBroker):
 
         jitter = random.randint(60, 180)  # 1min-3min
         if current_retries in [0, 1]:
-            return int(0.5 * 60)  # 0.5min
+            # if we are retrying `long_poll` msgs, we can have a situation where;
+            # 1. broker.dequeue is called, recieveBuf is empty so
+            # 2. we long_poll on AWS and get back messages. we buffer them in `recieveBuf`
+            # 3. broker._retry_after is called because `recieveBuf` was empty
+            # 4. the `VisibilityTimeout` of the msgs we buffered in `recieveBuf` is going down.
+            # 5. The solution is thus: we need to retry at a pace faster than `VisibilityTimeout`
+            return int(self.VisibilityTimeout / 5)
         elif current_retries == 2:
-            return 1 * 60
+            return int(self.VisibilityTimeout / 3)
         elif current_retries >= 6:
             return (16 * 60) + jitter  # 16 minutes + jitter
         else:
@@ -646,6 +651,14 @@ class SqsBroker(wiji.broker.BaseBroker):
                             executor,
                             functools.partial(self._receive_message_POLL, queue_name=queue_name),
                         )
+                        # we have just called AWS, so maybe we got some messages and populated the `recieveBuf`
+                        # if that is the case, we should hand those msgs over to `wiji` right away instead of sleeping
+                        item = self._get_per_queue_recieveBuf(queue_name=queue_name).get()
+                        if item:
+                            retry_count = 0
+                            return item
+
+                        # we should sleep only if the above call to AWS didn't yield any messages.
                         interval = self._retry_after(retry_count)
                         retry_count += 1
                         self.logger.log(
@@ -751,7 +764,6 @@ class SqsBroker(wiji.broker.BaseBroker):
     async def done(self, item: str, queue_name: str, state: wiji.task.TaskState) -> None:
         """
         """
-
         task_options = json.loads(item)["task_options"]
         with concurrent.futures.ThreadPoolExecutor(
             thread_name_prefix=self._thread_name_prefix

@@ -448,14 +448,20 @@ class TestBroker(TestCase):
             self.assertIsInstance(broker._get_per_queue_url(queue_name=PrintTask.queue_name), str)
 
     def test_retries(self):
-        res = wijisqs.SqsBroker._retry_after(-110)
-        self.assertEqual(res, 30)
+        broker = wijisqs.SqsBroker(
+            aws_region_name="eu-west-1",
+            aws_access_key_id="aws_access_key_id",
+            aws_secret_access_key="aws_secret_access_key",
+        )
+
+        res = broker._retry_after(-110)
+        self.assertEqual(res, broker.VisibilityTimeout / 5)
 
         res = wiji.Worker._retry_after(5)
         self.assertTrue(res > 60 * (2 ** 5))
 
         for i in [6, 7, 34]:
-            res = wiji.Worker._retry_after(i)
+            res = broker._retry_after(i)
             self.assertTrue(res > 16 * 60)
 
     def test_retries_called(self):
