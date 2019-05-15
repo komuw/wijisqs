@@ -31,7 +31,7 @@ flake8 .
 ```                      
 - run [pylint](https://pypi.python.org/pypi/pylint) on the code and fix any issues:                      
 ```shell
-pylint --enable=E --disable=W,R,C --unsafe-load-any-extension=y examples/ wijisqs/ tests/
+pylint --enable=E --disable=W,R,C examples/ wijisqs/ tests/
 ```    
 - run bandit
 ```shell

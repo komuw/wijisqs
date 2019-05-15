@@ -12,6 +12,7 @@ import concurrent
 import botocore.config
 import botocore.session
 
+from . import timer
 from . import buffer
 
 if typing.TYPE_CHECKING:
@@ -37,7 +38,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         queue_tags: typing.Union[None, typing.Dict[str, str]] = None,
         loglevel: str = "INFO",
         log_handler: typing.Union[None, wiji.logger.BaseLogger] = None,
-        long_poll: bool = False,
+        long_poll: bool = True,
+        # using `batch_send=True` may be problematic in some cases
         batch_send: bool = False,
         batching_duration: float = 10.00,
     ) -> None:
@@ -487,6 +489,63 @@ class SqsBroker(wiji.broker.BaseBroker):
         except Exception as e:
             raise e
 
+    def _drain_sendBuf(self, queue_name: str) -> None:
+        """
+        gets called by `SqsBroker.deque` so as to drain the `sendBuf` of the particular queue.
+        It is called be `.deque` because that method is always called by `wiji.Worker` in a loop(always).
+
+        We are creating a thread per queue_name per invocation of `Task.delay`; this is very bad
+        but we somehow offset that cost by checking if a thread with given name already exists and we return.
+        """
+        if self._SHOULD_SHUT_DOWN:
+            return
+        if not self.batch_send:
+            return
+
+        # take items from buffer & send batch
+        sendBuf = self._get_per_queue_sendBuf(queue_name=queue_name)
+        if sendBuf.size() <= 0:
+            return
+
+        buf_updated_at = sendBuf.last_update_time()
+        now = time.monotonic()
+        time_since_update = now - buf_updated_at
+        if time_since_update < self.batching_duration:
+            # TODO: we have potential of creating runaway threads
+            # (threads inside other threads forever)
+            timer.WijiSqsTimer(
+                # we want this thread to run sooner
+                interval=self.batching_duration / 2.5,
+                function=self._drain_sendBuf,
+                args=(queue_name,),
+                name="WijiSqsTimer-{0}".format(queue_name),
+            ).start()
+            # if we HAVE sent in last X seconds return
+            return
+
+        while sendBuf.size() > 0:
+            # while there are still any messages in the buffer,
+            # send them in batches of 10.
+            Entries = []
+            buffer_entries = sendBuf.give_me_ten()
+            for entry in buffer_entries:
+                thingy = {
+                    "Id": entry["task_id"],
+                    "MessageBody": entry["msg_body"],
+                    "DelaySeconds": entry["delay"],
+                    "MessageAttributes": {
+                        "user": {"DataType": "String", "StringValue": "wiji.SqsBroker"},
+                        "task_eta": {"DataType": "String", "StringValue": entry["eta"]},
+                        "task_id": {"DataType": "String", "StringValue": entry["task_id"]},
+                        "task_hook_metadata": {
+                            "DataType": "String",
+                            "StringValue": entry.get("task_hook_metadata") or "empty",
+                        },
+                    },
+                }
+                Entries.append(thingy)
+            self._send_message_batch(Entries=Entries, queue_name=queue_name)
+
     async def enqueue(self, queue_name: str, item: str) -> None:
         """
         """
@@ -500,6 +559,19 @@ class SqsBroker(wiji.broker.BaseBroker):
                 },
             )
             return None
+
+        if self.batch_send:
+            # this will create a thread per queue_name per invocation of `Task.delay`; this is very bad
+            # but we somehow offset that cost by checking if a thread with given name already exists
+            thread_name = "WijiSqsTimer-{0}".format(queue_name)
+            if thread_name not in [i.name for i in threading.enumerate()]:
+                t = timer.WijiSqsTimer(
+                    interval=self.batching_duration * 1.5,
+                    function=self._drain_sendBuf,
+                    args=(queue_name,),
+                    name=thread_name,
+                )
+                t.start()
 
         task_options = json.loads(item)["task_options"]
         with concurrent.futures.ThreadPoolExecutor(

@@ -7,7 +7,7 @@ from setuptools import setup, find_packages
 import codecs
 
 here = os.path.abspath(os.path.dirname(__file__))
-about = {}
+about: dict = {}
 with open(os.path.join(here, "wijisqs", "__version__.py"), "r") as f:
     x = f.read()
     y = x.replace("about = ", "")

@@ -166,8 +166,11 @@ class TestBroker(TestCase):
         self.assertTrue(isinstance(broker, wiji.broker.BaseBroker))
 
     def test_task_queuing(self):
-        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
+            "wijisqs.SqsBroker.enqueue", new=AsyncMock()
+        ) as mock_enqueue:
             mock_boto_client.return_value = MockSqs()
+            mock_enqueue.mock.return_value = None
 
             brokers = [
                 wijisqs.SqsBroker(
@@ -205,7 +208,7 @@ class TestBroker(TestCase):
 
                 class AdderTask(wiji.task.Task):
                     the_broker = broker
-                    queue_name = "AdderTaskQueue1"
+                    queue_name = "AdderTaskQueue-test_task_queuing"
 
                     async def run(self, a, b):
                         res = a + b
@@ -213,7 +216,8 @@ class TestBroker(TestCase):
 
                 myAdderTask = AdderTask()
                 myAdderTask.synchronous_delay(4, 6, task_options=wiji.task.TaskOptions(eta=34.56))
-                # TODO: asser things
+                self.assertTrue(mock_enqueue.mock.called)
+                self.assertEqual(mock_enqueue.mock.call_args[1]["queue_name"], AdderTask.queue_name)
 
     def test_task_dequeuing(self):
         def mock_okay_resp(task_id, Body):
@@ -274,6 +278,7 @@ class TestBroker(TestCase):
                     loglevel="DEBUG",
                     long_poll=False,
                     queue_tags=queue_tags,
+                    batching_duration=0.0001,
                 ),
                 wijisqs.SqsBroker(
                     aws_region_name="eu-west-1",
@@ -282,6 +287,7 @@ class TestBroker(TestCase):
                     loglevel="DEBUG",
                     long_poll=True,
                     queue_tags=queue_tags,
+                    batching_duration=0.0001,
                 ),
                 wijisqs.SqsBroker(
                     aws_region_name="eu-west-1",
@@ -291,6 +297,7 @@ class TestBroker(TestCase):
                     long_poll=False,
                     batch_send=False,
                     queue_tags=queue_tags,
+                    batching_duration=0.0001,
                 ),
                 wijisqs.SqsBroker(
                     aws_region_name="eu-west-1",
@@ -300,6 +307,7 @@ class TestBroker(TestCase):
                     long_poll=True,
                     batch_send=True,
                     queue_tags=queue_tags,
+                    batching_duration=0.0001,
                 ),
             ]
 
@@ -307,7 +315,7 @@ class TestBroker(TestCase):
 
                 class AdderTask(wiji.task.Task):
                     the_broker = broker
-                    queue_name = "AdderTaskQueue1"
+                    queue_name = "AdderTaskQueue-test_task_dequeuing"
 
                     async def run(self, a, b):
                         res = a + b
@@ -325,6 +333,7 @@ class TestBroker(TestCase):
                 self.assertEqual(dequeued_item["task_options"]["max_retries"], 0)
                 self.assertEqual(dequeued_item["task_options"]["args"], [])
                 self.assertEqual(dequeued_item["task_options"]["kwargs"], kwargs)
+                time.sleep(broker.batching_duration * 2)
 
     def test_receive_no_message(self):
         mock_okay_resp = {
@@ -404,7 +413,7 @@ class TestBroker(TestCase):
 
             class AdderTask(wiji.task.Task):
                 the_broker = broker
-                queue_name = "AdderTaskQueue1"
+                queue_name = "AdderTaskQueue-test_create_queue_called_once"
 
                 async def run(self, a, b):
                     res = a + b
@@ -669,6 +678,12 @@ class TestBatching(TestCase):
         python -m unittest discover -v -s .
     run one testcase as:
         python -m unittest -v tests.test_broker.TestBatching.test_something
+
+    For most of the tests in this class, we need to;
+      `time.sleep()` for a duration longer than `timer.WijiSqsTimer` will be around.
+    This will ensure that;
+      (i) `timer.WijiSqsTimer` has had time to run and thus drain the `sendBuf`
+      (ii) the `mock.patch("wijisqs.SqsBroker._get_per_thread_client")` is still arrive and thus `WijiSqsTimer` doesn't make actual AWS calls
     """
 
     def setUp(self):
@@ -690,17 +705,19 @@ class TestBatching(TestCase):
             "wijisqs.SqsBroker._send_message_batch"
         ) as mock_send_message_batch:
             mock_boto_client.return_value = MockSqs()
+            batching_duration = 0.001
             broker = wijisqs.SqsBroker(
                 aws_region_name="eu-west-1",
                 aws_access_key_id="aws_access_key_id",
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
                 batch_send=False,
+                batching_duration=batching_duration,
             )
 
             class AdderTask(wiji.task.Task):
                 the_broker = broker
-                queue_name = "AdderTask"
+                queue_name = "AdderTask-test_no_batching"
 
                 async def run(self, a, b):
                     res = a + b
@@ -730,17 +747,19 @@ class TestBatching(TestCase):
             "wijisqs.SqsBroker._send_message_batch"
         ) as mock_send_message_batch:
             mock_boto_client.return_value = MockSqs()
+            batching_duration = 0.001
             broker = wijisqs.SqsBroker(
                 aws_region_name="eu-west-1",
                 aws_access_key_id="aws_access_key_id",
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
                 batch_send=True,
+                batching_duration=batching_duration,
             )
 
             class AdderTask(wiji.task.Task):
                 the_broker = broker
-                queue_name = "AdderTask"
+                queue_name = "AdderTask-test_yes_batching_one_message"
 
                 async def run(self, a, b):
                     res = a + b
@@ -757,7 +776,7 @@ class TestBatching(TestCase):
     def test_yes_batching_13_message(self):
         """
         test that even when batching is ON, and we have more than 10messages; some are sent to AWS
-        and the remainder are left
+        while others are left in the buffer.
         """
         kwargsy = {"a": 4, "b": 6}
         with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
@@ -766,17 +785,19 @@ class TestBatching(TestCase):
             "wijisqs.SqsBroker._send_message_batch"
         ) as mock_send_message_batch:
             mock_boto_client.return_value = MockSqs()
+            batching_duration = 0.001
             broker = wijisqs.SqsBroker(
                 aws_region_name="eu-west-1",
                 aws_access_key_id="aws_access_key_id",
                 aws_secret_access_key="aws_secret_access_key",
                 loglevel="DEBUG",
                 batch_send=True,
+                batching_duration=batching_duration,
             )
 
             class AdderTask(wiji.task.Task):
                 the_broker = broker
-                queue_name = "AdderTask"
+                queue_name = "AdderTask-test_yes_batching_13_message"
 
                 async def run(self, a, b):
                     res = a + b
@@ -790,15 +811,64 @@ class TestBatching(TestCase):
 
             self.assertFalse(mock_send_message.called)
             self.assertTrue(mock_send_message_batch.called)
-            self.assertEqual(len(mock_send_message_batch.call_args[1]["Entries"]), 10)
             self.assertEqual(
-                json.loads(mock_send_message_batch.call_args[1]["Entries"][9]["MessageBody"])[
+                json.loads(mock_send_message_batch.call_args[1]["Entries"][0]["MessageBody"])[
                     "task_options"
                 ]["kwargs"],
                 kwargsy,
             )
-            # 4 messages are left
-            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 4)
+            # 1 message is left
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 1)
+
+    def test_yes_batching_13_message_await_duration(self):
+        """
+        test that even when batching is ON, and we have more than 10messages; some are sent to AWS
+        via normal means while others are sent by the background thread.
+        Thus no msg(after a certain period of time) is left in the buffers.
+        """
+        kwargsy = {"a": 4, "b": 6}
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client, mock.patch(
+            "wijisqs.SqsBroker._send_message"
+        ) as mock_send_message, mock.patch(
+            "wijisqs.SqsBroker._send_message_batch"
+        ) as mock_send_message_batch:
+            mock_boto_client.return_value = MockSqs()
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class AdderTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "AdderTask-test_yes_batching_13_message_await_duration"
+
+                async def run(self, a, b):
+                    res = a + b
+                    return res
+
+            num_msgs = []
+            for _ in range(1, 15):
+                num_msgs.append(1)
+                AdderTask().synchronous_delay(a=kwargsy["a"], b=kwargsy["b"])
+            self.assertEqual(len(num_msgs), 14)
+
+            self.assertFalse(mock_send_message.called)
+            self.assertTrue(mock_send_message_batch.called)
+            self.assertEqual(
+                json.loads(mock_send_message_batch.call_args[1]["Entries"][0]["MessageBody"])[
+                    "task_options"
+                ]["kwargs"],
+                kwargsy,
+            )
+
+            time.sleep(batching_duration * 2)
+            # No message is left
+            self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 0)
 
     def test_yes_batching_one_message_long_duration(self):
         """
@@ -814,7 +884,7 @@ class TestBatching(TestCase):
         ) as mock_send_message_batch:
             mock_boto_client.return_value = MockSqs()
 
-            batching_duration = 0.11
+            batching_duration = 0.001
             broker = wijisqs.SqsBroker(
                 aws_region_name="eu-west-1",
                 aws_access_key_id="aws_access_key_id",
@@ -826,13 +896,14 @@ class TestBatching(TestCase):
 
             class AdderTask(wiji.task.Task):
                 the_broker = broker
-                queue_name = "AdderTask"
+                queue_name = "AdderTask-test_yes_batching_one_message_long_duration"
 
                 async def run(self, a, b):
                     res = a + b
                     return res
 
             myAdderTask = AdderTask()
+            # this one message will go into buffer
             myAdderTask.synchronous_delay(a=kwargsy["a"], b=kwargsy["b"])
 
             time.sleep(batching_duration * 2)
@@ -847,8 +918,191 @@ class TestBatching(TestCase):
                 ]["kwargs"],
                 kwargsy,
             )
-            # no messages left
+            # 1 messages left
             self.assertEqual(broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 1)
+
+            # sleep so that `WijiSqsTimer` can run and also
+            # so that `_get_per_thread_client` patch is still in scope
+            time.sleep(batching_duration * 2)
+            self.assertEqual(
+                broker._get_per_queue_sendBuf(AdderTask.queue_name).size(), 0
+            )  # remaining msg was sent to AWS by `WijiSqsTimer`
+
+    def test_batch_send_less_messages(self):
+        """
+        If we have batch_send=True:
+          and then we queue only 5 messages(ie less than 10), and we do not queue any other messages,
+          those 5 SHOULD still be sent to SQS after expiry of `batching_duration`.
+         This test guards against regressing to a bug that existed in wijisqs: https://github.com/komuw/wijisqs/issues/36
+        """
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask-test_batch_send_less_messages"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            # queue any messages less than 10
+            for i in range(0, 5):
+                PrintTask().synchronous_delay()
+
+            # sleep so that batching_duration expires
+            time.sleep(batching_duration * 5)
+
+            # all messages should have been sent to SQS,
+            # even if we haven't queued a new one.
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 0)
+
+    def test_batch_send_less_messages_duration_not_expired(self):
+        """
+        If we have batch_send=True:
+          and then we queue only 5 messages(ie less than 10), and we do not queue any other messages,
+          those 5 SHOULD still be sent to SQS after expiry of `batching_duration`.
+          This test guards against regressing to a bug that existed in wijisqs: https://github.com/komuw/wijisqs/issues/36
+        """
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask-test_batch_send_less_messages_duration_not_expired"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            # queue any messages less than 10
+            for i in range(0, 5):
+                PrintTask().synchronous_delay()
+
+            # if `broker.batching_duration` has not expired,
+            # `broker._drain_sendBuf` does not run.
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 1)
+
+    def test_batch_send_one_message(self):
+        """
+         This test guards against regressing to a bug that existed in wijisqs: https://github.com/komuw/wijisqs/issues/36
+        """
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask-test_batch_send_one_message"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            # queue just one message
+            PrintTask().synchronous_delay()
+            time.sleep(batching_duration * 3)
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 0)
+
+    def test_batch_send_one_message_plus_one(self):
+        """
+         This test guards against regressing to a bug that existed in wijisqs: https://github.com/komuw/wijisqs/issues/36
+        """
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask-test_batch_send_one_message_plus_one"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            # queue just one message
+            PrintTask().synchronous_delay()
+            time.sleep(batching_duration * 2)
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 0)
+
+            PrintTask().synchronous_delay()
+            time.sleep(batching_duration * 2)
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 0)
+
+    def test_batch_send_one_message_plus_one_multiple_queues(self):
+        """
+         This test guards against regressing to a bug that existed in wijisqs: https://github.com/komuw/wijisqs/issues/36
+        """
+        with mock.patch("wijisqs.SqsBroker._get_per_thread_client") as mock_boto_client:
+            mock_boto_client.return_value = MockSqs()
+
+            batching_duration = 0.001
+            broker = wijisqs.SqsBroker(
+                aws_region_name="eu-west-1",
+                aws_access_key_id="aws_access_key_id",
+                aws_secret_access_key="aws_secret_access_key",
+                loglevel="DEBUG",
+                batch_send=True,
+                batching_duration=batching_duration,
+            )
+
+            class PrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "PrintTask-test_batch_send_one_message_plus_one_multiple_queues"
+
+                async def run(self, **kwargs):
+                    print("PrintTask executed")
+
+            class SecondPrintTask(wiji.task.Task):
+                the_broker = broker
+                queue_name = "SecondPrintTask-test_batch_send_one_message_plus_one_multiple_queues"
+
+                async def run(self, **kwargs):
+                    print("SecondPrintTask executed")
+
+            # queue just one message of `PrintTask`
+            PrintTask().synchronous_delay()
+            time.sleep(batching_duration * 9)
+            self.assertEqual(broker._get_per_queue_sendBuf(PrintTask.queue_name).size(), 0)
+
+            # queue another of a different task, `SecondPrintTask`
+            SecondPrintTask().synchronous_delay()
+            time.sleep(batching_duration * 9)
+            self.assertEqual(broker._get_per_queue_sendBuf(SecondPrintTask.queue_name).size(), 0)
 
 
 class TestLongPoll(TestCase):

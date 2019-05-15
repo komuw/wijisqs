@@ -32,6 +32,15 @@ jobs:
             coverage run --branch --omit="*tests*,*examples/*,*.virtualenvs/*,*virtualenv/*,*.venv/*,*__init__*" -m unittest discover -v -s .
             codecov
             coverage report --show-missing --fail-under=76
+      - run:
+          name: test WijiSqsTimer runs okay
+          command: |
+            # test that for batching, `WijiSqsTimer` runs okay all the time
+            # TODO: once in a while, run tests with no internet access
+            for x in 1 2 3 4 5
+            do
+              python -m unittest -v tests.test_broker.TestBatching;
+            done
 
   static-analysis:
     docker:
@@ -57,7 +66,7 @@ jobs:
             printf "\n running flake8:: \n"
             flake8 .
             printf "\n running pylint:: \n"
-            pylint --enable=E --disable=W,R,C --unsafe-load-any-extension=y setup.py wijisqs/ tests/ documentation/
+            pylint --enable=E --disable=W,R,C setup.py wijisqs/ tests/ documentation/
             printf "\n running bandit:: \n"
             bandit -r --exclude .venv -ll .
             printf "\n running mypy:: \n"
