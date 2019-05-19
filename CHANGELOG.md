@@ -1,6 +1,10 @@
 ## `wijisqs` changelog:
 most recent version is listed first.    
 
+
+## **version:** v0.4.2
+- lower `botocore` connect and read timeout values : https://github.com/komuw/wijisqs/pull/50
+
 ## **version:** v0.4.1
 - bugfix: with `batch_send=True`, wijisqs could fail to send some residual messages to AWS: https://github.com/komuw/wijisqs/pull/46  
 - For `long_poll` when we call AWS, get messages and populate `recieveBuf`; hand those msgs over to `wiji` right away instead of sleeping.   

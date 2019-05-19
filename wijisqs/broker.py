@@ -316,8 +316,8 @@ class SqsBroker(wiji.broker.BaseBroker):
         except Exception as e:
             raise e
 
-    @staticmethod
     def _sqs_client(
+        self,
         aws_region_name: str,
         aws_access_key_id: str,
         aws_secret_access_key: str,
@@ -330,7 +330,10 @@ class SqsBroker(wiji.broker.BaseBroker):
                 # add tests here
         """
         boto_config: botocore.config.Config = botocore.config.Config(
-            region_name=aws_region_name, user_agent=user_agent, connect_timeout=60, read_timeout=60
+            region_name=aws_region_name,
+            user_agent=user_agent,
+            connect_timeout=5,
+            read_timeout=self.ReceiveMessageWaitTimeSeconds + 2,
         )
         session: botocore.session.Session = botocore.session.Session()
         client: "botocore.client.SQS" = session.create_client(
