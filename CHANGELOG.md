@@ -2,8 +2,11 @@
 most recent version is listed first.    
 
 
+## **version:** v0.4.3
+- set `botocore` retries to 1: https://github.com/komuw/wijisqs/pull/51
+
 ## **version:** v0.4.2
-- lower `botocore` connect and read timeout values : https://github.com/komuw/wijisqs/pull/50
+- lower `botocore` connect and read timeout values: https://github.com/komuw/wijisqs/pull/50
 
 ## **version:** v0.4.1
 - bugfix: with `batch_send=True`, wijisqs could fail to send some residual messages to AWS: https://github.com/komuw/wijisqs/pull/46  

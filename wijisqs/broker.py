@@ -334,6 +334,7 @@ class SqsBroker(wiji.broker.BaseBroker):
             user_agent=user_agent,
             connect_timeout=5,
             read_timeout=self.ReceiveMessageWaitTimeSeconds + 2,
+            retries={"max_attempts": 1},
         )
         session: botocore.session.Session = botocore.session.Session()
         client: "botocore.client.SQS" = session.create_client(
